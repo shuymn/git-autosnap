@@ -1,7 +1,9 @@
 use anyhow::{Context, Result, bail};
 use git2::{Commit, IndexAddOption, Repository, Signature, Tree};
+use skim::Skim;
+use skim::prelude::{SkimItemReader, SkimOptionsBuilder};
 use std::fs::{self, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Cursor, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -262,11 +264,27 @@ fn iso8601_now_with_offset() -> String {
 }
 
 /// Open a snapshot in a subshell for exploration.
-pub fn snapshot_shell(repo_root: &Path, commit: Option<&str>) -> Result<()> {
+///
+/// # Arguments
+/// * `repo_root` - The repository root directory
+/// * `commit` - Optional commit SHA or reference to explore (defaults to HEAD)
+/// * `interactive` - If true, opens skim UI for interactive commit selection
+///
+/// # Returns
+/// * `Ok(())` if the subshell session completes successfully
+/// * `Err` if snapshot extraction or subshell launch fails
+pub fn snapshot_shell(repo_root: &Path, commit: Option<&str>, interactive: bool) -> Result<()> {
     let autosnap = autosnap_dir(repo_root);
     if !autosnap.exists() {
         bail!(".autosnap is missing; run `git autosnap init` first")
     }
+
+    // If interactive mode, select commit using skim
+    let commit_to_use = if interactive {
+        select_commit_interactive(&autosnap)?
+    } else {
+        commit.map(String::from)
+    };
 
     // Create a temporary directory
     let temp_dir = tempfile::TempDir::new().context("failed to create temporary directory")?;
@@ -277,7 +295,7 @@ pub fn snapshot_shell(repo_root: &Path, commit: Option<&str>) -> Result<()> {
         .with_context(|| format!("failed to open autosnap repo at {}", autosnap.display()))?;
 
     // Parse the commit reference
-    let commit_ref = commit.unwrap_or("HEAD");
+    let commit_ref = commit_to_use.as_deref().unwrap_or("HEAD");
     let object = repo
         .revparse_single(commit_ref)
         .with_context(|| format!("failed to parse commit reference: {}", commit_ref))?;
@@ -385,4 +403,108 @@ fn extract_tree_to_path(repo: &Repository, tree: &Tree, base_path: &Path) -> Res
     })?;
 
     Ok(())
+}
+
+/// Interactive commit selection using skim fuzzy finder.
+///
+/// Opens a terminal UI allowing users to browse and select from available snapshots.
+///
+/// # Arguments
+/// * `autosnap_dir` - Path to the .autosnap bare repository
+///
+/// # Returns
+/// * `Ok(Some(sha))` if a commit was selected
+/// * `Ok(None)` if user cancelled selection
+/// * `Err` if no snapshots exist or skim fails
+fn select_commit_interactive(autosnap_dir: &Path) -> Result<Option<String>> {
+    // Open the autosnap repository
+    let repo = Repository::open(autosnap_dir)
+        .with_context(|| format!("failed to open autosnap repo at {}", autosnap_dir.display()))?;
+
+    // Collect commits
+    let commits = list_commits(&repo, 100)?;
+
+    if commits.is_empty() {
+        bail!("No snapshots found in .autosnap repository");
+    }
+
+    // Prepare items for skim
+    let items: Vec<String> = commits
+        .iter()
+        .map(|c| format!("{}\t{}", c.0, c.1))
+        .collect();
+
+    let items_str = items.join("\n");
+
+    // Configure skim options
+    let options = SkimOptionsBuilder::default()
+        .height("50%".to_string())
+        .multi(false)
+        .preview(Some("".to_string()))
+        .preview_window("down:3:wrap".to_string())
+        .prompt("Select snapshot> ".to_string())
+        .build()
+        .context("failed to build skim options")?;
+
+    // Create skim input from string
+    let item_reader = SkimItemReader::default();
+    let items = item_reader.of_bufread(Cursor::new(items_str));
+
+    // Run skim
+    let selected = Skim::run_with(&options, Some(items)).and_then(|out| {
+        if out.is_abort {
+            None
+        } else {
+            out.selected_items.first().map(|item| {
+                let text = item.output();
+                // Extract the commit SHA (first part before tab)
+                text.split('\t').next().unwrap_or("").to_string()
+            })
+        }
+    });
+
+    if selected.is_none() {
+        bail!("No snapshot selected");
+    }
+
+    Ok(selected)
+}
+
+/// List commits from the repository.
+///
+/// Collects recent commits with their short SHA and first line of message.
+///
+/// # Arguments
+/// * `repo` - The repository to list commits from
+/// * `limit` - Maximum number of commits to retrieve
+///
+/// # Returns
+/// * `Ok(Vec<(sha, message)>)` - List of commit tuples with short SHA and first line
+/// * `Err` if revwalk or commit retrieval fails
+fn list_commits(repo: &Repository, limit: usize) -> Result<Vec<(String, String)>> {
+    let mut commits = Vec::new();
+    let mut revwalk = repo.revwalk()?;
+
+    // Start from HEAD
+    revwalk.push_head()?;
+
+    // Collect commits with their short SHA and message
+    for (i, oid) in revwalk.enumerate() {
+        if i >= limit {
+            break;
+        }
+
+        let oid = oid?;
+        let commit = repo.find_commit(oid)?;
+
+        let short_id = repo.find_object(oid, None)?.short_id()?;
+        let short_id_str = short_id.as_str().unwrap_or("unknown").to_string();
+
+        let message = commit.message().unwrap_or("no message");
+        let first_line = message.lines().next().unwrap_or(message).to_string();
+
+        commits.push((short_id_str, first_line));
+    }
+
+    Ok(commits)
 }

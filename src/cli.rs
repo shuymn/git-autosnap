@@ -48,5 +48,9 @@ pub enum Commands {
         /// Commit SHA or ref to explore (defaults to HEAD/latest)
         #[arg(value_name = "COMMIT")]
         commit: Option<String>,
+
+        /// Interactive mode: select commit from list using skim
+        #[arg(short, long)]
+        interactive: bool,
     },
 }

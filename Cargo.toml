@@ -21,6 +21,7 @@ fs2 = "0.4.3"
 libc = "0.2"
 time = { version = "0.3.36", features = ["formatting", "local-offset"] }
 tempfile = "3.10.1"
+skim = "0.20.5"
 
 [dev-dependencies]
 assert_cmd = "2.0.17"

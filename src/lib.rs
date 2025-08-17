@@ -82,9 +82,12 @@ pub fn run(cli: cli::Cli) -> Result<()> {
             let _ = daemon::stop(&root);
             process::uninstall(&root)?;
         }
-        Commands::Shell { commit } => {
+        Commands::Shell {
+            commit,
+            interactive,
+        } => {
             let root = gitlayer::repo_root()?;
-            gitlayer::snapshot_shell(&root, commit.as_deref())?;
+            gitlayer::snapshot_shell(&root, commit.as_deref(), interactive)?;
         }
     }
     Ok(())
