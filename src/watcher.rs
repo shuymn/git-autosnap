@@ -68,6 +68,7 @@ struct WatcherState {
     binary_update_requested: Arc<AtomicBool>,
     binary_update_tx: Sender<bool>,
     original_binary_metadata: Option<std::fs::Metadata>,
+    snapshot_in_progress: Arc<AtomicBool>,
 }
 
 /// Control flow from a handler.
@@ -90,6 +91,7 @@ async fn run_watcher(repo_root: PathBuf, debounce_ms: u64) -> Result<()> {
     // State shared with handler
     let (binary_update_tx, binary_update_rx) = std::sync::mpsc::channel::<bool>();
     let binary_update_requested = Arc::new(AtomicBool::new(false));
+    let snapshot_in_progress = Arc::new(AtomicBool::new(false));
 
     // Capture original binary metadata at startup for hot-reload detection
     let original_binary_metadata = std::env::current_exe()
@@ -102,6 +104,7 @@ async fn run_watcher(repo_root: PathBuf, debounce_ms: u64) -> Result<()> {
         binary_update_requested: binary_update_requested.clone(),
         binary_update_tx,
         original_binary_metadata,
+        snapshot_in_progress,
     });
 
     // Create config first to properly initialize watchexec
@@ -226,14 +229,25 @@ fn handle_signals(signals: &[watchexec_signals::Signal], state: &WatcherState) -
             // SIGUSR1: Force immediate snapshot
             Signal::User1 => {
                 info!("received SIGUSR1 - forcing snapshot");
-                let root = state.repo_root.clone();
-                std::thread::spawn(move || {
-                    if let Err(e) = gitlayer::snapshot_once(&root, None) {
-                        error!(error = ?e, "forced snapshot failed");
-                    } else {
-                        info!("forced snapshot created");
-                    }
-                });
+                // Use the same deduplication logic as handle_fs_events
+                if state
+                    .snapshot_in_progress
+                    .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                    .is_ok()
+                {
+                    let root = state.repo_root.clone();
+                    let in_progress = state.snapshot_in_progress.clone();
+                    std::thread::spawn(move || {
+                        if let Err(e) = gitlayer::snapshot_once(&root, None) {
+                            error!(error = ?e, "forced snapshot failed");
+                        } else {
+                            info!("forced snapshot created");
+                        }
+                        in_progress.store(false, Ordering::SeqCst);
+                    });
+                } else {
+                    warn!("snapshot already in progress, cannot force another");
+                }
             }
             // SIGUSR2: Prepare for binary replacement (exec new binary)
             Signal::User2 => {
@@ -251,14 +265,29 @@ fn handle_signals(signals: &[watchexec_signals::Signal], state: &WatcherState) -
 
 fn handle_fs_events(paths: &[(&Path, Option<&FileType>)], state: &WatcherState) {
     if !paths.is_empty() {
-        let root = state.repo_root.clone();
-        std::thread::spawn(move || {
-            if let Err(e) = gitlayer::snapshot_once(&root, None) {
-                error!(error = ?e, "snapshot failed");
-            } else {
-                info!("snapshot created");
-            }
-        });
+        // Try to acquire the snapshot lock using compare_exchange
+        // If false -> true succeeds, we got the lock and can proceed
+        // If it fails, another snapshot is already in progress
+        if state
+            .snapshot_in_progress
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+        {
+            let root = state.repo_root.clone();
+            let in_progress = state.snapshot_in_progress.clone();
+            std::thread::spawn(move || {
+                if let Err(e) = gitlayer::snapshot_once(&root, None) {
+                    error!(error = ?e, "snapshot failed");
+                } else {
+                    info!("snapshot created");
+                }
+                // Always clear the flag when done
+                in_progress.store(false, Ordering::SeqCst);
+            });
+        } else {
+            // Another snapshot is already in progress, skip this one
+            tracing::debug!("snapshot already in progress, skipping");
+        }
     }
 }
 
