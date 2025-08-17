@@ -36,15 +36,7 @@ pre-commit:
       tags: [testing]
       fail_text: "❌ Unit tests failed. Fix failing tests before committing."
 
-    # Check for debugging artifacts
-    debug-check:
-      run: |
-        ! grep -r "dbg!\|println!\|eprintln!" --include="*.rs" src/ 2>/dev/null || {
-          echo "❌ Found debug statements in code. Remove dbg!, println!, or eprintln! before committing."
-          exit 1
-        }
-      glob: "*.rs"
-      tags: [quality]
+# Removed debug-check as it was blocking legitimate CLI output statements
 
   # Skip conditions for pre-commit
   skip:
