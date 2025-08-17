@@ -1050,6 +1050,7 @@ dependencies = [
  "tracing-subscriber",
  "watchexec",
  "watchexec-filterer-ignore",
+ "watchexec-signals",
 ]
 
 [[package]]
