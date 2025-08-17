@@ -172,49 +172,69 @@ pub fn snapshot_once(repo_root: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Garbage collect (prune) snapshots older than the given number of days.
+/// Garbage collect snapshots - compress objects and optionally prune old ones.
+///
+/// When `prune` is false, only compresses/packs objects without removing any snapshots.
+/// When `prune` is true with `prune_days` set, removes snapshots older than the specified days.
 ///
 /// Uses git command directly instead of libgit2 because libgit2 doesn't provide
 /// APIs for reflog expiration or garbage collection. These are considered
 /// "policy-based" housekeeping operations that libgit2 intentionally omits,
 /// requiring applications to either implement custom logic using low-level
 /// primitives or shell out to git (which is the standard practice).
-pub fn gc(repo_root: &Path, prune_days: u32) -> Result<()> {
+pub fn gc(repo_root: &Path, prune: bool, prune_days: Option<u32>) -> Result<()> {
     let autosnap = autosnap_dir(repo_root);
     if !autosnap.exists() {
         return Ok(()); // nothing to do
     }
 
     let gitdir = autosnap.to_string_lossy().to_string();
-    // Use Git's duration syntax like "60d" for 60 days
-    let expire = format!("{}d", prune_days);
 
-    let status = Command::new("git")
-        .args([
-            format!("--git-dir={}", gitdir).as_str(),
-            "reflog",
-            "expire",
-            format!("--expire={}", expire).as_str(),
-            "--all",
-        ])
-        .status()
-        .context("failed to run git reflog expire")?;
-    if !status.success() {
-        return Err(anyhow::anyhow!(
-            "git reflog expire exited with status {status}"
-        ));
-    }
+    if prune {
+        // Pruning mode: expire reflog and prune old objects
+        let days = prune_days.unwrap_or(60);
+        let expire = format!("{}d", days);
 
-    let status = Command::new("git")
-        .args([
-            format!("--git-dir={}", gitdir).as_str(),
-            "gc",
-            format!("--prune={}", expire).as_str(),
-        ])
-        .status()
-        .context("failed to run git gc")?;
-    if !status.success() {
-        return Err(anyhow::anyhow!("git gc exited with status {status}"));
+        // First expire the reflog
+        let status = Command::new("git")
+            .args([
+                format!("--git-dir={}", gitdir).as_str(),
+                "reflog",
+                "expire",
+                format!("--expire={}", expire).as_str(),
+                "--all",
+            ])
+            .status()
+            .context("failed to run git reflog expire")?;
+        if !status.success() {
+            return Err(anyhow::anyhow!(
+                "git reflog expire exited with status {status}"
+            ));
+        }
+
+        // Then gc with pruning
+        let status = Command::new("git")
+            .args([
+                format!("--git-dir={}", gitdir).as_str(),
+                "gc",
+                format!("--prune={}", expire).as_str(),
+            ])
+            .status()
+            .context("failed to run git gc --prune")?;
+        if !status.success() {
+            return Err(anyhow::anyhow!(
+                "git gc --prune exited with status {status}"
+            ));
+        }
+    } else {
+        // Compression-only mode: just pack objects without pruning
+        let status = Command::new("git")
+            .args([format!("--git-dir={}", gitdir).as_str(), "gc"])
+            .status()
+            .context("failed to run git gc")?;
+        if !status.success() {
+            return Err(anyhow::anyhow!("git gc exited with status {status}"));
+        }
     }
 
     Ok(())

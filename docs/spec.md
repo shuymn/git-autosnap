@@ -82,7 +82,8 @@ git autosnap start --daemon  # launch watcher in background (daemonize)
 git autosnap stop         # send SIGTERM to pid in .autosnap/autosnap.pid
 git autosnap status       # exit 0 if running
 git autosnap once         # take one snapshot and exit
-git autosnap gc           # prune snapshots older than --days N (default 60)
+git autosnap gc           # compress snapshots (pack objects)
+git autosnap gc --prune   # prune snapshots older than --days N (default 60)
 git autosnap uninstall    # stop watcher if running and remove .autosnap directory
 ```
 

@@ -33,11 +33,15 @@ pub enum Commands {
     /// Take one snapshot and exit
     Once,
 
-    /// Prune snapshots older than N days (default: 60)
+    /// Garbage collect (compress) snapshots, optionally pruning old ones
     Gc {
-        /// Retention in days
+        /// Prune snapshots older than N days when used with --prune
         #[arg(long, value_name = "DAYS")]
         days: Option<u32>,
+
+        /// Enable pruning of old snapshots (requires --days or uses default 60)
+        #[arg(long)]
+        prune: bool,
     },
 
     /// Stop watcher (if running) and remove .autosnap directory

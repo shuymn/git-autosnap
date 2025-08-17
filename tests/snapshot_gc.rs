@@ -58,6 +58,6 @@ async fn gc_invocation_succeeds() -> Result<()> {
     exec_in(&container, "/repo", "sh -c 'echo content > f.txt'").await?;
     exec_in(&container, "/repo", "git autosnap once").await?;
 
-    exec_in(&container, "/repo", "git autosnap gc --days 1").await?;
+    exec_in(&container, "/repo", "git autosnap gc --prune --days 1").await?;
     Ok(())
 }

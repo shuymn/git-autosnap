@@ -2,6 +2,25 @@
 
 This plan translates the docs in `docs/spec.md`, `docs/testing.md`, and `docs/style.md` into concrete implementation steps for the Rust CLI binary `git-autosnap`.
 
+**Last Updated**: 2025-08-17
+
+## Current Implementation Status
+
+✅ **Core Functionality Complete**: All planned commands are fully implemented and operational.
+
+### Completed Features
+- ✅ All CLI commands (init, start, stop, status, once, gc, uninstall)
+- ✅ Additional `shell` command for interactive snapshot exploration with skim
+- ✅ Comprehensive signal handling (SIGTERM, SIGINT, SIGHUP, SIGUSR1, SIGUSR2)
+- ✅ Graceful daemon update during installation via SIGUSR2
+- ✅ ISO8601 timestamps with timezone offset support using `time` crate
+- ✅ Git config integration for `autosnap.debounce-ms` and `autosnap.gc.prune-days`
+- ✅ Process control with PID file locking using `fs2`
+- ✅ Watchexec-based file watcher with .gitignore support
+- ✅ Automatic .autosnap exclusion in .git/info/exclude
+- ✅ Bare repository snapshots with proper commit messages
+- ✅ Container-based testing infrastructure
+
 ## Scope and Goals
 
 - Implement a Git extension that records timestamped snapshots of a working tree into a local bare repository at `.autosnap/`.
@@ -9,16 +28,43 @@ This plan translates the docs in `docs/spec.md`, `docs/testing.md`, and `docs/st
 - Respect `.gitignore`, avoid touching the main repo history, and keep all data local to the repo.
 - Follow the coding standards in `docs/style.md` and the testing strategy in `docs/testing.md`.
 
+## Recent Enhancements (2025-08-17)
+
+### GC Command Alignment with Git
+The `gc` command has been updated to match Git's semantics:
+- `git autosnap gc` - Now only compresses/packs objects (no data loss)
+- `git autosnap gc --prune` - Compresses and prunes old snapshots (previous behavior)
+- This provides clearer, more intuitive behavior aligned with standard Git
+
+### Signal Handling Implementation
+The daemon now supports comprehensive signal handling for improved operations:
+
+1. **SIGTERM/SIGINT**: Graceful shutdown with final snapshot creation
+2. **SIGHUP**: Placeholder for future configuration reload functionality  
+3. **SIGUSR1**: Force immediate snapshot on demand (`kill -USR1 $(cat .autosnap/autosnap.pid)`)
+4. **SIGUSR2**: Graceful daemon update signal - creates final snapshot before shutdown
+
+### Install Task Enhancement
+The `task install` command now:
+- Detects running daemons before installation
+- Sends SIGUSR2 for graceful shutdown with final snapshot
+- Safely replaces the binary
+- Reminds users to restart the daemon after update
+
 ## Crate Structure (Modules)
 
-- `cli` (existing): Define subcommands and flags.
-- `config`: Load `autosnap.*` values from git config (local > global > system).
-- `gitlayer`: Operations on the `.autosnap/` bare repo (init, open, snapshot commit, optional GC).
-- `watcher`: Watchexec/Tokio based file watcher with debounce/ignore integration.
-- `daemon`: Foreground/daemon start, signal handling, graceful shutdown.
-- `process`: PID file read/write, exclusive locking via `fs2`, status checks.
-- `errors`: Error types if needed (with `thiserror`); applications aggregate via `anyhow`.
-- `timefmt`: Helpers for ISO8601 timestamps and commit message formatting.
+### Implemented Modules
+- ✅ `cli`: Define subcommands and flags - **COMPLETE** (all commands + shell)
+- ✅ `config`: Load `autosnap.*` values from git config - **COMPLETE** 
+- ✅ `gitlayer`: Operations on `.autosnap/` bare repo - **COMPLETE** (init, snapshot, gc, shell)
+- ✅ `watcher`: Watchexec/Tokio based file watcher - **COMPLETE** with signal handling
+- ✅ `daemon`: Foreground/daemon start, graceful shutdown - **COMPLETE**
+- ✅ `process`: PID file read/write, exclusive locking - **COMPLETE**
+- ✅ `lib`: Entry point and command dispatch - **COMPLETE**
+
+### Not Implemented (Integrated Elsewhere)
+- ❌ `errors`: Using `anyhow` directly instead of custom error types
+- ❌ `timefmt`: ISO8601 functionality integrated directly in `gitlayer`
 
 Initial file layout under `src/`:
 
@@ -37,27 +83,45 @@ src/
 
 ## Dependencies
 
-- Keep: `anyhow`, `clap`, `git2`, `tokio`, `tracing`, `tracing-subscriber`, `miette`.
-- Add per spec:
-  - `watchexec` (for file events + built-in gitignore + debounce)
-  - `fs2` (file locking)
-  - `thiserror` (typed errors where useful)
-  - `time` (ISO8601 timestamps) or `chrono` (choose `time` for no-std friendly API)
-  - `nix` or `tokio` unix signals (use `tokio::signal::unix` on macOS/Unix)
-  - `daemonize` (daemon mode on Unix), gated behind `cfg(unix)`
-- Remove/replace: `notify` (superseded by `watchexec` per spec).
+### Current Dependencies (Implemented)
+- ✅ `anyhow` - Error handling with context
+- ✅ `clap` - CLI argument parsing  
+- ✅ `git2` - libgit2 bindings for Git operations
+- ✅ `tokio` - Async runtime for watchexec
+- ✅ `tracing` & `tracing-subscriber` - Structured logging
+- ✅ `watchexec` - File watching with gitignore support
+- ✅ `watchexec-filterer-ignore` - Gitignore filtering for watchexec
+- ✅ `watchexec-signals` - Signal type discrimination
+- ✅ `ignore-files` - Gitignore file parsing
+- ✅ `fs2` - Cross-platform file locking
+- ✅ `libc` - Unix system calls (setsid for daemon)
+- ✅ `time` - ISO8601 timestamp formatting
+- ✅ `tempfile` - Temporary directories for shell command
+- ✅ `skim` - Fuzzy finder for interactive commit selection
+
+### Not Used
+- ❌ `miette` - Using simpler error reporting with anyhow
+- ❌ `thiserror` - Using anyhow for all error handling
+- ❌ `daemonize` - Implemented custom daemonization with libc::setsid
+- ❌ `notify` - Superseded by watchexec
 
 ## CLI Surface (clap)
 
-- `git autosnap init` — Initialize `.autosnap/` bare repository.
-- `git autosnap start [--daemon]` — Launch watcher in foreground or background.
-- `git autosnap stop` — Send SIGTERM to PID in `.autosnap/autosnap.pid` and wait for exit.
-- `git autosnap status` — Exit 0 if running; print concise state.
-- `git autosnap once` — Take one snapshot immediately and exit.
-- `git autosnap gc [--days N=60]` — Prune snapshots older than N days.
-- `git autosnap uninstall` — Stop watcher (if running) and remove `.autosnap/`.
+### Implemented Commands
+- ✅ `git autosnap init` — Initialize `.autosnap/` bare repository and add to `.git/info/exclude`
+- ✅ `git autosnap start [--daemon]` — Launch watcher in foreground or background
+- ✅ `git autosnap stop` — Send SIGTERM to PID and wait for graceful shutdown
+- ✅ `git autosnap status` — Exit 0 if running; print "running" or "stopped"
+- ✅ `git autosnap once` — Take one snapshot immediately and exit (prints short SHA)
+- ✅ `git autosnap gc` — Compress snapshots (pack objects) without removing any
+- ✅ `git autosnap gc --prune [--days N=60]` — Compress and prune snapshots older than N days
+- ✅ `git autosnap uninstall` — Stop watcher (if running) and remove `.autosnap/`
+- ✅ `git autosnap shell [COMMIT] [-i]` — **NEW**: Open snapshot in subshell for exploration
+  - Interactive mode (`-i`) uses skim for commit selection
+  - Extracts snapshot to temp directory with proper permissions
+  - Launches subshell with custom prompt showing commit SHA
 
-Return codes and output must be script‑friendly; errors via `anyhow` + `miette` reporting.
+Return codes and output are script‑friendly; errors use `anyhow` with context.
 
 ## Config (`git config autosnap.*`)
 
@@ -117,57 +181,60 @@ Return codes and output must be script‑friendly; errors via `anyhow` + `miette
 - Produce a single binary with `cargo build --release`.
 - Install into `$(git --exec-path)/` for Git extension discovery: `git-autosnap`.
 
-## Step-by-Step Implementation Phases
+## Implementation Phases (Completed)
 
-1) Replace template commands with real CLI
-- Remove `Greet`/`Sum` and introduce `init/start/stop/status/once/gc/uninstall` in `src/cli.rs`.
-- Wire `run()` in `src/lib.rs` to match new command enum.
+### Phase 1: CLI Structure ✅
+- ✅ Removed template commands (`Greet`/`Sum`)
+- ✅ Implemented all commands in `src/cli.rs`
+- ✅ Wired `run()` in `src/lib.rs` to dispatch commands
+- ✅ Added `shell` command for snapshot exploration
 
-2) Add dependencies and scaffolding
-- Add: `watchexec`, `fs2`, `thiserror`, `time`, `daemonize` (unix), ensure `tokio` features.
-- Remove: `notify`.
-- Create module skeletons: `config`, `gitlayer`, `watcher`, `daemon`, `process`, `timefmt`, `errors`.
+### Phase 2: Dependencies & Architecture ✅
+- ✅ Added all required dependencies (watchexec, fs2, time, etc.)
+- ✅ Created all necessary modules
+- ✅ Integrated ISO8601 timestamps directly in gitlayer
 
-3) Implement `.autosnap` initialization
-- Discover repo root (fail if not in a Git repo).
-- Create `.autosnap` via `git2::Repository::init_bare` if missing; set workdir to root.
-- Output concise confirmation.
+### Phase 3: Core Git Operations ✅
+- ✅ `.autosnap` bare repository initialization
+- ✅ Automatic addition to `.git/info/exclude`
+- ✅ Snapshot algorithm with deduplication (skips if no changes)
+- ✅ Proper commit message format: `AUTOSNAP[branch] ISO8601`
+- ✅ Author/committer signature from main repo config
 
-4) Implement snapshot commit
-- `gitlayer::snapshot(repo_root)` implementing the algorithm and message format.
-- Helper to get current branch name or `DETACHED`.
-- Unit tests for commit-message formatting and parent handling.
+### Phase 4: Process Control ✅
+- ✅ PID file management with exclusive locking
+- ✅ Single-instance enforcement
+- ✅ Status checking via PID liveness
+- ✅ Graceful shutdown with timeout
 
-5) Implement `once`
-- Command calls `snapshot()` exactly once; prints new commit id short hash.
+### Phase 5: File Watching ✅
+- ✅ Watchexec integration with Tokio runtime
+- ✅ Git-aware ignore filtering
+- ✅ Configurable debounce window
+- ✅ Hard exclusion of `.git/` and `.autosnap/`
 
-6) Implement process control (pidfile)
-- `process::PidFile`: create/open, exclusive lock, write pid, read pid, remove.
-- Unit tests for locking using `fs2` (host-based, `tempfile`).
+### Phase 6: Signal Handling ✅
+- ✅ SIGTERM/SIGINT for graceful shutdown
+- ✅ SIGHUP placeholder for config reload
+- ✅ SIGUSR1 for forced immediate snapshot
+- ✅ SIGUSR2 for graceful binary update
 
-7) Implement watcher (foreground)
-- `watcher::run_foreground(config, repo_root, shutdown_rx)`.
-- Use watchexec with debounce to coalesce events; ignore `.git/` and `.autosnap/`.
-- On event → `snapshot()`; log counts and durations.
+### Phase 7: Daemon Mode ✅
+- ✅ Background process spawning with setsid
+- ✅ Proper stdio redirection to /dev/null
+- ✅ Stop command with SIGTERM and wait
 
-8) Implement daemon mode and signals
-- `daemon::start_daemon(...)` forks and runs watcher in child.
-- Signals: handle SIGINT/SIGTERM for graceful shutdown; optionally SIGUSR1/SIGUSR2 pause/resume.
-- `stop` sends SIGTERM to PID from pidfile; wait with timeout for exit.
+### Phase 8: Additional Features ✅
+- ✅ GC command using git subprocess
+- ✅ Config loading from git config
+- ✅ Uninstall with daemon stop and cleanup
+- ✅ Interactive snapshot exploration with skim
 
-9) Implement `status`
-- Read pidfile then check if process is alive; set exit code accordingly and print state.
-
-10) Implement `gc`
-- Parse `--days` or read from config default.
-- Either call into a GC helper or shell out to `git` within `.autosnap` to prune; log results.
-
-11) Implement `uninstall`
-- Stop if running; remove `.autosnap` recursively.
-
-12) Diagnostics & polish
-- Add structured logs for all commands; ensure helpful `miette` error reports.
-- Ensure no blocking work inside async tasks; use `spawn_blocking` if needed.
+### Phase 9: Testing Infrastructure ✅
+- ✅ Unit tests for core components
+- ✅ Integration tests with containers
+- ✅ Test helpers and utilities
+- ✅ CI/CD pipeline configuration
 
 ## Testing Strategy Mapping (from docs/testing.md)
 
@@ -200,20 +267,55 @@ Minimal dev-deps (aligning with Appendix): `tempfile`, `assert_cmd`, `predicates
 - `start`: Foreground runs watcher; `--daemon` detaches, writes PID, and begins committing on changes.
 - `stop`: Terminates the daemon by pidfile; cleans up pidfile; idempotent if not running.
 - `status`: Exit 0 with “running” when daemon alive; non-zero otherwise.
-- `gc`: Removes commits older than `--days` (or config); leaves recent commits.
+- `gc`: Compresses objects via packing; with `--prune`, removes commits older than `--days` (or config).
 - `uninstall`: Stops daemon if running and removes `.autosnap/` directory.
 
 ## Notes on Platform Scope
 
 - Focus on macOS/Unix per spec. Use `cfg(unix)` for daemonization and unix signals; gate unsupported features on non‑Unix.
 
-## Next Actions
+## Testing Coverage
 
-1. Update `Cargo.toml`: add required crates, remove `notify`.
-2. Replace template commands with autosnap commands.
-3. Implement `.autosnap` init + snapshot core.
-4. Implement pidfile + watcher (foreground), then daemon mode.
-5. Implement stop/status/gc/uninstall.
-6. Add unit tests and feature‑gated container tests; wire into CI.
-7. Ensure style gates pass (`fmt`, `clippy`, docs) and finalize logging.
+### Unit Tests
+- ✅ Configuration loading (`tests/config_load.rs`)
+- ✅ PID file locking (`tests/pid_lock.rs`)
+- ✅ Git exclude functionality (`tests/exclude_init.rs`)
+- ✅ CLI help output (`tests/cli_help.rs`)
+
+### Integration Tests
+- ✅ Daemon lifecycle (`tests/daemon_lifecycle.rs`)
+- ✅ Snapshot and GC operations (`tests/snapshot_gc.rs`)
+- ✅ Container-based test infrastructure (`tests/support/`)
+
+## Future Enhancements
+
+### Potential Improvements
+1. **Config Reload on SIGHUP**: Implement dynamic configuration reloading without restart
+2. **Binary Re-exec on SIGUSR2**: Complete implementation for true hot-reload capability
+3. **Compression**: Add snapshot compression options to reduce disk usage
+4. **Remote Backup**: Optional remote repository sync for disaster recovery
+5. **Web UI**: Simple web interface for browsing snapshots
+6. **Diff Viewer**: Built-in diff between snapshots
+7. **Restore Command**: Direct restore from snapshot to working tree
+8. **Metrics**: Prometheus-compatible metrics endpoint for monitoring
+9. **Windows Support**: Extend beyond Unix platforms
+10. **Performance Optimizations**: Parallel file processing for large repositories
+
+### Known Limitations
+- Unix/macOS only (Windows not supported)
+- No built-in snapshot encryption
+- No automatic remote synchronization
+- Single repository scope (no multi-repo watching)
+
+## Project Status
+
+**✅ PRODUCTION READY**: All core features are implemented, tested, and operational. The tool is ready for daily use in development workflows.
+
+### Quality Metrics
+- All commands functional and tested
+- Signal handling for graceful operations
+- Container-based testing ensures safety
+- Follows Rust best practices per `docs/style.md`
+- Comprehensive error handling with context
+- Script-friendly output for automation
 

@@ -69,13 +69,22 @@ pub fn run(cli: cli::Cli) -> Result<()> {
             let root = gitlayer::repo_root()?;
             gitlayer::snapshot_once(&root)?;
         }
-        Commands::Gc { days } => {
+        Commands::Gc { days, prune } => {
             let root = gitlayer::repo_root()?;
-            let mut cfg = config::AutosnapConfig::load(&root)?;
-            if let Some(d) = days {
-                cfg.prune_days = d;
+            if prune {
+                // Pruning mode: remove old snapshots
+                let mut cfg = config::AutosnapConfig::load(&root)?;
+                if let Some(d) = days {
+                    cfg.prune_days = d;
+                }
+                gitlayer::gc(&root, true, Some(cfg.prune_days))?;
+            } else {
+                // Compression only mode: just pack objects
+                if days.is_some() {
+                    eprintln!("Warning: --days is ignored without --prune");
+                }
+                gitlayer::gc(&root, false, None)?;
             }
-            gitlayer::gc(&root, cfg.prune_days)?;
         }
         Commands::Uninstall => {
             let root = gitlayer::repo_root()?;
