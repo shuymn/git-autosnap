@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use anyhow::{bail, Result};
+use anyhow::{Context, Result};
 
 /// Path to the PID file inside `.autosnap`.
 pub fn pid_file(repo_root: &Path) -> PathBuf {
@@ -8,9 +8,16 @@ pub fn pid_file(repo_root: &Path) -> PathBuf {
 }
 
 /// Print running status. Placeholder implementation.
-pub fn status() -> Result<()> {
-    // TODO: Implement real status using pidfile + liveness probe.
-    println!("git-autosnap status: not implemented");
+pub fn status(repo_root: &Path) -> Result<()> {
+    let pid_path = pid_file(repo_root);
+    if !pid_path.exists() {
+        println!("stopped");
+        return Ok(());
+    }
+    let content = fs::read_to_string(&pid_path)
+        .with_context(|| format!("failed to read {}", pid_path.display()))?;
+    let pid = content.trim();
+    println!("running (pid={})", pid);
     Ok(())
 }
 
@@ -26,4 +33,3 @@ pub fn uninstall(repo_root: &Path) -> Result<()> {
     }
     Ok(())
 }
-
