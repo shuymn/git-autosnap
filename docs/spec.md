@@ -52,6 +52,7 @@ flowchart TD
 #### 4.2 Git Layer
 
 * Open **bare repo** at `./.autosnap/` (created by `git autosnap init`)
+* Automatically adds `.autosnap` to `.git/info/exclude` during init to prevent it from appearing in `git status`
 * `Repository::set_workdir()` points to the **main working directory**
 * Snapshot algorithm:
 
@@ -75,7 +76,7 @@ AUTOSNAP[<branch-or-DETACHED>] <ISO8601 timestamp with offset>
 #### 4.4 CLI Surface
 
 ```text
-git autosnap init         # initialize .autosnap bare repository
+git autosnap init         # initialize .autosnap bare repository and add to .git/info/exclude
 git autosnap start        # launch watcher in foreground
 git autosnap start --daemon  # launch watcher in background (daemonize)
 git autosnap stop         # send SIGTERM to pid in .autosnap/autosnap.pid
@@ -147,7 +148,7 @@ Static linking produces a single \~5 MB binary (libgit2 + OpenSSL).
 
 ```bash
 # inside an existing Git repo
-git autosnap init           # setup .autosnap bare repository
+git autosnap init           # setup .autosnap bare repository and add to .git/info/exclude
 git autosnap start --daemon # launch in background
 # …edit files…
 git autosnap stop           # stop the daemon
