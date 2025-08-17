@@ -98,6 +98,25 @@ pub fn run(cli: cli::Cli) -> Result<()> {
             let root = gitlayer::repo_root()?;
             gitlayer::snapshot_shell(&root, commit.as_deref(), interactive)?;
         }
+        Commands::Restore {
+            commit,
+            interactive,
+            force,
+            dry_run,
+            full,
+            paths,
+        } => {
+            let root = gitlayer::repo_root()?;
+            gitlayer::restore(
+                &root,
+                commit.as_deref(),
+                interactive,
+                force,
+                dry_run,
+                full,
+                &paths,
+            )?;
+        }
     }
     Ok(())
 }

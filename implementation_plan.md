@@ -46,6 +46,22 @@ The daemon now supports comprehensive signal handling for improved operations:
 3. **SIGUSR1**: Force immediate snapshot on demand (`kill -USR1 $(cat .autosnap/autosnap.pid)`)
 4. **SIGUSR2**: Hot-reload binary update - polls for binary change and performs exec() to maintain PID
 
+### Restore Command Implementation (2025-08-18)
+The `restore` command provides safe recovery from snapshots:
+
+**Features**:
+- Safe-by-default: refuses to overwrite uncommitted changes unless `--force`
+- Dry-run mode: preview changes with `--dry-run`
+- Full restore: `--full` removes files not in snapshot (preserves .git/.autosnap)
+- Partial restore: specify paths to restore specific files/directories
+- Interactive selection: `-i` flag for fuzzy-finding commits with skim
+
+**Implementation**:
+- Uses libgit2's `checkout_tree` for efficient file restoration
+- Manual handling of file removal in full mode to protect critical directories
+- Updates main repository index after successful restore
+- Comprehensive safety checks and user feedback
+
 ### Install Task Enhancement
 The `task install` command now:
 - Performs atomic binary replacement (copy to .new, then rename)
@@ -126,10 +142,16 @@ src/
 - ✅ `git autosnap gc` — Compress snapshots (pack objects) without removing any
 - ✅ `git autosnap gc --prune [--days N=60]` — Compress and prune snapshots older than N days
 - ✅ `git autosnap uninstall` — Stop watcher (if running) and remove `.autosnap/`
-- ✅ `git autosnap shell [COMMIT] [-i]` — **NEW**: Open snapshot in subshell for exploration
+- ✅ `git autosnap shell [COMMIT] [-i]` — Open snapshot in subshell for exploration
   - Interactive mode (`-i`) uses skim for commit selection
   - Extracts snapshot to temp directory with proper permissions
   - Launches subshell with custom prompt showing commit SHA
+- ✅ `git autosnap restore [COMMIT] [PATH...] [--force] [--dry-run] [--full] [-i]` — **NEW**: Restore files from snapshot
+  - Interactive mode (`-i`) uses skim for commit selection
+  - `--force` overrides safety check for uncommitted changes
+  - `--dry-run` previews changes without modifying files
+  - `--full` removes files not present in snapshot (excludes .git/.autosnap)
+  - Supports partial restore with specific paths
 
 Return codes and output are script‑friendly; errors use `anyhow` with context.
 
@@ -239,6 +261,7 @@ Return codes and output are script‑friendly; errors use `anyhow` with context.
 - ✅ Config loading from git config
 - ✅ Uninstall with daemon stop and cleanup
 - ✅ Interactive snapshot exploration with skim
+- ✅ **Restore command with libgit2 checkout (2025-08-18)**
 
 ### Phase 9: Testing Infrastructure ✅
 - ✅ Unit tests for core components
@@ -304,7 +327,7 @@ Minimal dev-deps (aligning with Appendix): `tempfile`, `assert_cmd`, `predicates
 2. **Remote Backup**: Optional remote repository sync for disaster recovery
 3. **Web UI**: Simple web interface for browsing snapshots
 4. **Diff Viewer**: Built-in diff between snapshots
-5. **Restore Command**: Direct restore from snapshot to working tree
+5. ~~**Restore Command**: Direct restore from snapshot to working tree~~ ✅ **IMPLEMENTED (2025-08-18)**
 6. **Metrics**: Prometheus-compatible metrics endpoint for monitoring
 7. **Windows Support**: Extend beyond Unix platforms
 8. **Performance Optimizations**: Parallel file processing for large repositories

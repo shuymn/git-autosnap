@@ -57,4 +57,31 @@ pub enum Commands {
         #[arg(short, long)]
         interactive: bool,
     },
+
+    /// Restore files from a snapshot to the working tree
+    Restore {
+        /// Commit SHA or ref to restore from (defaults to HEAD/latest)
+        #[arg(value_name = "COMMIT")]
+        commit: Option<String>,
+
+        /// Interactive mode: select commit from list using skim
+        #[arg(short, long)]
+        interactive: bool,
+
+        /// Force restore even if there are uncommitted changes
+        #[arg(long)]
+        force: bool,
+
+        /// Preview changes without actually restoring
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Full restore: remove files not present in snapshot
+        #[arg(long)]
+        full: bool,
+
+        /// Specific paths to restore (if empty, restores all)
+        #[arg(value_name = "PATH")]
+        paths: Vec<String>,
+    },
 }
