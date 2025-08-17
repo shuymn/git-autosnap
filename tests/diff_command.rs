@@ -49,13 +49,13 @@ fn test_diff_formats() {
 
     // Configure git user
     Command::new("git")
-        .args(&["config", "user.name", "Test User"])
+        .args(["config", "user.name", "Test User"])
         .current_dir(&temp_dir)
         .assert()
         .success();
 
     Command::new("git")
-        .args(&["config", "user.email", "test@example.com"])
+        .args(["config", "user.email", "test@example.com"])
         .current_dir(&temp_dir)
         .assert()
         .success();
@@ -84,7 +84,7 @@ fn test_diff_formats() {
     // Test --stat format
     Command::cargo_bin("git-autosnap")
         .unwrap()
-        .args(&["diff", "--stat"])
+        .args(["diff", "--stat"])
         .current_dir(&temp_dir)
         .assert()
         .success()
@@ -93,7 +93,7 @@ fn test_diff_formats() {
     // Test --name-only format
     Command::cargo_bin("git-autosnap")
         .unwrap()
-        .args(&["diff", "--name-only"])
+        .args(["diff", "--name-only"])
         .current_dir(&temp_dir)
         .assert()
         .success()
@@ -102,7 +102,7 @@ fn test_diff_formats() {
     // Test --name-status format
     Command::cargo_bin("git-autosnap")
         .unwrap()
-        .args(&["diff", "--name-status"])
+        .args(["diff", "--name-status"])
         .current_dir(&temp_dir)
         .assert()
         .success()
@@ -122,13 +122,13 @@ fn test_diff_between_commits() {
 
     // Configure git user
     Command::new("git")
-        .args(&["config", "user.name", "Test User"])
+        .args(["config", "user.name", "Test User"])
         .current_dir(&temp_dir)
         .assert()
         .success();
 
     Command::new("git")
-        .args(&["config", "user.email", "test@example.com"])
+        .args(["config", "user.email", "test@example.com"])
         .current_dir(&temp_dir)
         .assert()
         .success();
@@ -174,7 +174,7 @@ fn test_diff_between_commits() {
     // Test diff between two commits
     Command::cargo_bin("git-autosnap")
         .unwrap()
-        .args(&["diff", &commit1, &commit2, "--name-only"])
+        .args(["diff", &commit1, &commit2, "--name-only"])
         .current_dir(&temp_dir)
         .assert()
         .success()
