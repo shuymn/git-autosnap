@@ -19,40 +19,86 @@ This document defines testing strategies for `git-autosnap` that ensure comprehe
 For maximum isolation and safety, use testcontainers for integration tests (Rust 1.80 MSRV assumed):
 
 ```rust
+// For async tests (default):
 use anyhow::Result;
-use testcontainers::{clients::Cli, images::generic::GenericImage, Container};
+use testcontainers::{core::{WaitFor, ExecCommand}, runners::AsyncRunner, GenericImage, ImageExt};
 
-fn setup_isolated_test_environment() -> Result<Container> {
-    let docker = Cli::default();
+async fn setup_isolated_test_environment() -> Result<testcontainers::ContainerAsync<GenericImage>> {
+    // Create container with git and rust toolchain
+    let image = GenericImage::new("rust", "1.80-bookworm")
+        .with_env_var("HOME", "/test-home")
+        .with_env_var("GIT_CONFIG_NOSYSTEM", "1")
+        .with_wait_for(WaitFor::message_on_stdout(""));  // Wait for container to be ready
     
+    let container = image.start().await?;
+    
+    // Install git-autosnap binary in container
+    let cmd = ExecCommand::new(["bash", "-lc", "cargo install --path ."]);
+    let result = container.exec(cmd).await?;
+    assert_eq!(result.exit_code().await?, 0);
+    
+    Ok(container)
+}
+
+#[cfg(feature = "container-tests")]
+#[tokio::test]
+async fn test_complete_workflow_in_container() {
+    let container = setup_isolated_test_environment().await.unwrap();
+    
+    // All operations happen inside the container
+    let cmd = ExecCommand::new(["git", "init", "/test-repo"]);
+    container.exec(cmd).await.unwrap();
+    
+    let cmd = ExecCommand::new(["sh", "-c", "cd /test-repo && git autosnap init"]);
+    container.exec(cmd).await.unwrap();
+    
+    let cmd = ExecCommand::new(["sh", "-c", "cd /test-repo && git autosnap start --daemon"]);
+    container.exec(cmd).await.unwrap();
+    
+    // Verify behavior without any risk to host
+    let cmd = ExecCommand::new(["sh", "-c", "cd /test-repo && git autosnap status"]);
+    let result = container.exec(cmd).await.unwrap();
+    assert_eq!(result.exit_code().await.unwrap(), 0);
+}
+
+// For synchronous/blocking tests:
+use testcontainers::{core::ExecCommand, runners::SyncRunner, GenericImage, ImageExt};
+
+fn setup_isolated_test_environment_sync() -> Result<testcontainers::Container<GenericImage>> {
     // Create container with git and rust toolchain
     let image = GenericImage::new("rust", "1.80-bookworm")
         .with_env_var("HOME", "/test-home")
         .with_env_var("GIT_CONFIG_NOSYSTEM", "1");
     
-    let container = docker.run(image);
+    let container = image.start()?;
     
     // Install git-autosnap binary in container
-    // Note: use the proper Exec API for your testcontainers version
-    // e.g., ExecCommand in async runners; check exit status and capture stdout/stderr.
-    // container.exec(ExecCommand::new("bash").with_args(["-lc", "cargo install --path ."]))?;
+    let cmd = ExecCommand::new(["bash", "-lc", "cargo install --path ."]);
+    let mut result = container.exec(cmd)?;
+    assert_eq!(result.exit_code()?.unwrap_or(1), 0);
     
     Ok(container)
 }
 
 #[cfg(feature = "container-tests")]
 #[test]
-fn test_complete_workflow_in_container() {
-    let container = setup_isolated_test_environment().unwrap();
+fn test_complete_workflow_in_container_sync() {
+    let container = setup_isolated_test_environment_sync().unwrap();
     
     // All operations happen inside the container
-    container.exec(vec!["git", "init", "/test-repo"]);
-    container.exec(vec!["sh", "-c", "cd /test-repo && git autosnap init"]);
-    container.exec(vec!["sh", "-c", "cd /test-repo && git autosnap start --daemon"]);
+    let cmd = ExecCommand::new(["git", "init", "/test-repo"]);
+    container.exec(cmd).unwrap();
+    
+    let cmd = ExecCommand::new(["sh", "-c", "cd /test-repo && git autosnap init"]);
+    container.exec(cmd).unwrap();
+    
+    let cmd = ExecCommand::new(["sh", "-c", "cd /test-repo && git autosnap start --daemon"]);
+    container.exec(cmd).unwrap();
     
     // Verify behavior without any risk to host
-    let output = container.exec(vec!["sh", "-c", "cd /test-repo && git autosnap status"]);
-    assert!(output.status.success());
+    let cmd = ExecCommand::new(["sh", "-c", "cd /test-repo && git autosnap status"]);
+    let mut result = container.exec(cmd).unwrap();
+    assert_eq!(result.exit_code().unwrap().unwrap_or(1), 0);
 }
 ```
 
@@ -145,16 +191,16 @@ Containers provide **complete isolation** from the host system, making these tes
 
 ```rust
 use anyhow::Result;
-use testcontainers::{clients::Cli, core::WaitFor, images::generic::GenericImage};
+use testcontainers::{core::{WaitFor, ExecCommand}, runners::AsyncRunner, GenericImage, ImageExt, ContainerAsync};
 use std::sync::{Arc, LazyLock, Weak, atomic::{AtomicUsize, Ordering}};
 use tokio::sync::Mutex;
 
 // Shared container instance for all tests
-static SHARED_CONTAINER: LazyLock<Arc<Mutex<Option<GitAutosnapTestContainer>>>> =
+static SHARED_CONTAINER: LazyLock<Arc<Mutex<Option<Arc<GitAutosnapTestContainer>>>>> =
     LazyLock::new(|| Arc::new(Mutex::new(None)));
 
 struct GitAutosnapTestContainer {
-    container: Container<'static, GenericImage>,
+    container: ContainerAsync<GenericImage>,
     test_counter: AtomicUsize,
 }
 
@@ -168,11 +214,10 @@ impl GitAutosnapTestContainer {
         
         // Create new shared container from a prebuilt image.
         // Build 'git-autosnap-test:latest' in CI before tests to avoid inline Dockerfile builds.
-        let cli = Cli::default();
         let image = GenericImage::new("git-autosnap-test", "latest")
             .with_wait_for(WaitFor::message_on_stdout("ready"));
         
-        let container = cli.run(image);
+        let container = image.start().await?;
         let shared = Arc::new(Self { 
             container, 
             test_counter: AtomicUsize::new(0),
@@ -187,12 +232,15 @@ impl GitAutosnapTestContainer {
         let test_id = self.test_counter.fetch_add(1, Ordering::SeqCst);
         let workspace_path = format!("/test-workspace-{}", test_id);
         
-        self.exec(vec!["mkdir", "-p", &workspace_path]).await?;
-        self.exec(vec!["git", "init", &workspace_path]).await?;
+        let cmd = ExecCommand::new(["mkdir", "-p", &workspace_path]);
+        self.container.exec(cmd).await?;
+        
+        let cmd = ExecCommand::new(["git", "init", &workspace_path]);
+        self.container.exec(cmd).await?;
         
         Ok(TestWorkspace {
             path: workspace_path,
-            container: Arc::downgrade(&self),
+            container: Arc::downgrade(&Arc::new(self.clone())),
         })
     }
     
@@ -223,11 +271,12 @@ impl Drop for TestWorkspace {
             let path = self.path.clone();
             std::thread::spawn(move || {
                 if let Ok(rt) = tokio::runtime::Runtime::new() {
-                    let _ = rt.block_on(container.exec(vec![
+                    let cmd = ExecCommand::new([
                         "sh",
                         "-c",
                         &format!("rm -rf {}", path),
-                    ]));
+                    ]);
+                    let _ = rt.block_on(container.container.exec(cmd));
                 }
             });
         }
@@ -238,16 +287,17 @@ impl Drop for TestWorkspace {
 #### Per-Test Container Strategy (Maximum Isolation)
 
 ```rust
+use testcontainers::{runners::AsyncRunner, GenericImage, ContainerAsync};
+
 struct IsolatedTestContainer {
-    container: Container<'static, GenericImage>,
+    container: ContainerAsync<GenericImage>,
 }
 
 impl IsolatedTestContainer {
     async fn new() -> Result<Self> {
-        let cli = Cli::default();
         // Use a pre-built image (build in CI ahead of tests)
         let image = GenericImage::new("git-autosnap-test", "latest");
-        let container = cli.run(image);
+        let container = image.start().await?;
         Ok(Self { container })
     }
 }
@@ -290,59 +340,61 @@ Async runner variant (uses ExecCommand; feature-gate or place in a module used o
 // Cargo.toml (dev-dependencies)
 // anyhow = "1"
 // shell-escape = "0.1"
-// testcontainers = "<your-version>"  # with async support
+// testcontainers = "0.25"  # with async support (default)
 
 use anyhow::{bail, Context, Result};
 use shell_escape::unix::escape;
-use testcontainers::{core::ExecCommand, Container, Image};
+use testcontainers::{core::ExecCommand, ContainerAsync, Image};
 
-pub async fn exec_bash_async<I: Image>(c: &Container<'_, I>, cmd: &str) -> Result<String> {
-    let out = c
-        .exec(ExecCommand {
-            cmd: vec!["bash".into(), "-lc".into(), cmd.into()],
-            ..Default::default()
-        })
-        .await
-        .context("container exec failed")?;
-
-    if out.exit_code != 0 {
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        bail!("command failed (code {}): {}", out.exit_code, stderr);
+pub async fn exec_bash_async<I: Image>(c: &ContainerAsync<I>, cmd: &str) -> Result<String> {
+    let exec_cmd = ExecCommand::new(["bash", "-lc", cmd]);
+    let result = c.exec(exec_cmd).await.context("container exec failed")?;
+    
+    let exit_code = result.exit_code().await?;
+    if exit_code != 0 {
+        let stderr = result.stderr_to_vec().await?;
+        let stderr_str = String::from_utf8_lossy(&stderr);
+        bail!("command failed (code {}): {}", exit_code, stderr_str);
     }
-    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    
+    let stdout = result.stdout_to_vec().await?;
+    Ok(String::from_utf8_lossy(&stdout).into_owned())
 }
 
-pub async fn exec_in_async<I: Image>(c: &Container<'_, I>, cwd: &str, cmd: &str) -> Result<String> {
+pub async fn exec_in_async<I: Image>(c: &ContainerAsync<I>, cwd: &str, cmd: &str) -> Result<String> {
     let script = format!("cd {} && {}", escape(cwd.into()), cmd);
     exec_bash_async(c, &script).await
 }
 ```
 
-Blocking runner variant (classic `clients::Cli`):
+Blocking runner variant (synchronous API):
 
 ```rust
 // Cargo.toml (dev-dependencies)
 // anyhow = "1"
 // shell-escape = "0.1"
-// testcontainers = "<your-version>"
+// testcontainers = { version = "0.25", features = ["blocking"] }
 
 use anyhow::{bail, Context, Result};
 use shell_escape::unix::escape;
-use testcontainers::{Container, Image};
+use testcontainers::{core::ExecCommand, Container, Image};
 
-pub fn exec_bash<I: Image>(c: &Container<'_, I>, cmd: &str) -> Result<String> {
-    // Most versions expose a blocking exec that returns an output struct
-    let out = c.exec(vec!["bash", "-lc", cmd]);
-
-    // Adjust field names if your version differs
-    if out.exit_code != 0 {
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        bail!("command failed (code {}): {}", out.exit_code, stderr);
+pub fn exec_bash<I: Image>(c: &Container<I>, cmd: &str) -> Result<String> {
+    let exec_cmd = ExecCommand::new(["bash", "-lc", cmd]);
+    let mut result = c.exec(exec_cmd).context("container exec failed")?;
+    
+    let exit_code = result.exit_code()?.unwrap_or(1);
+    if exit_code != 0 {
+        let stderr = result.stderr_to_vec()?;
+        let stderr_str = String::from_utf8_lossy(&stderr);
+        bail!("command failed (code {}): {}", exit_code, stderr_str);
     }
-    Ok(String::from_utf8(out.stdout).context("invalid utf8 on stdout")?)
+    
+    let stdout = result.stdout_to_vec()?;
+    Ok(String::from_utf8(stdout).context("invalid utf8 on stdout")?)
 }
 
-pub fn exec_in<I: Image>(c: &Container<'_, I>, cwd: &str, cmd: &str) -> Result<String> {
+pub fn exec_in<I: Image>(c: &Container<I>, cwd: &str, cmd: &str) -> Result<String> {
     let script = format!("cd {} && {}", escape(cwd.into()), cmd);
     exec_bash(c, &script)
 }
@@ -367,6 +419,8 @@ impl GitAutosnapTestContainer {
 ### Testing Dangerous Operations Safely
 
 ```rust
+use testcontainers::core::ExecCommand;
+
 #[cfg(feature = "container-tests")]
 #[tokio::test(flavor = "multi_thread", timeout = 5)]
 async fn test_local_git_config_modification() -> Result<()> {
@@ -374,15 +428,18 @@ async fn test_local_git_config_modification() -> Result<()> {
     let workspace = container.create_test_workspace().await?;
     
     // Workspace will be cleaned up automatically even if test fails
-    container.exec(vec![
+    let cmd = ExecCommand::new([
         "sh", "-c",
         &format!("cd {} && git config --local autosnap.debounce-ms 500", workspace.path())
-    ]).await?;
+    ]);
+    container.container.exec(cmd).await?;
     
-    let output = container.exec(vec![
+    let cmd = ExecCommand::new([
         "sh", "-c",
         &format!("cd {} && git config --get autosnap.debounce-ms", workspace.path())
-    ]).await?;
+    ]);
+    let result = container.container.exec(cmd).await?;
+    let output = String::from_utf8(result.stdout_to_vec().await?)?;
     assert_eq!(output.trim(), "500");
     
     Ok(())
@@ -394,17 +451,25 @@ async fn test_local_git_config_modification() -> Result<()> {
 async fn test_daemon_process_lifecycle() -> Result<()> {
     let test_env = get_test_container(ContainerStrategy::Isolated).await?;
     
-    test_env.exec(vec!["git", "autosnap", "start", "--daemon"]).await?;
+    let cmd = ExecCommand::new(["git", "autosnap", "start", "--daemon"]);
+    test_env.container.exec(cmd).await?;
     
-    let status = test_env.exec(vec!["git", "autosnap", "status"]).await?;
+    let cmd = ExecCommand::new(["git", "autosnap", "status"]);
+    let result = test_env.container.exec(cmd).await?;
+    let status = String::from_utf8(result.stdout_to_vec().await?)?;
     assert!(status.contains("running"));
 
     // Send signal to the specific process recorded in the pidfile
-    let pid = test_env.exec(vec!["sh", "-c", "cat .autosnap/autosnap.pid"]).await?;
+    let cmd = ExecCommand::new(["sh", "-c", "cat .autosnap/autosnap.pid"]);
+    let result = test_env.container.exec(cmd).await?;
+    let pid = String::from_utf8(result.stdout_to_vec().await?)?;
     let pid = pid.trim();
-    test_env.exec(vec!["kill", "-USR1", pid]).await?;
     
-    test_env.exec(vec!["git", "autosnap", "stop"]).await?;
+    let cmd = ExecCommand::new(["kill", "-USR1", pid]);
+    test_env.container.exec(cmd).await?;
+    
+    let cmd = ExecCommand::new(["git", "autosnap", "stop"]);
+    test_env.container.exec(cmd).await?;
     
     Ok(())
 }
@@ -421,26 +486,31 @@ async fn test_concurrent_snapshot_operations() -> Result<()> {
             let workspace = container.create_test_workspace().await?;
             // Workspace auto-cleanup even if any operation fails
             
-            container.exec(vec![
+            let cmd = ExecCommand::new([
                 "sh", "-c",
                 &format!("cd {} && git autosnap init", workspace.path())
-            ]).await?;
+            ]);
+            container.container.exec(cmd).await?;
             
-            container.exec(vec![
+            let cmd = ExecCommand::new([
                 "sh", "-c",
                 &format!("cd {} && echo 'test {}' > file.txt", workspace.path(), i)
-            ]).await?;
+            ]);
+            container.container.exec(cmd).await?;
             
-            container.exec(vec![
+            let cmd = ExecCommand::new([
                 "sh", "-c",
                 &format!("cd {} && git autosnap once", workspace.path())
-            ]).await?;
+            ]);
+            container.container.exec(cmd).await?;
             
             // Verify snapshot created
-            let log = container.exec(vec![
+            let cmd = ExecCommand::new([
                 "sh", "-c",
                 &format!("cd {} && git --git-dir=.autosnap log --oneline", workspace.path())
-            ]).await?;
+            ]);
+            let result = container.container.exec(cmd).await?;
+            let log = String::from_utf8(result.stdout_to_vec().await?)?;
             
             assert!(log.contains("AUTOSNAP"));
             Ok::<(), anyhow::Error>(())
@@ -466,22 +536,28 @@ async fn test_concurrent_snapshot_operations() -> Result<()> {
 #[tokio::test(flavor = "multi_thread", timeout = 10)]
 async fn test_file_watcher_debounce() -> Result<()> {
     use anyhow::Result;
+    use testcontainers::core::ExecCommand;
     let container = GitAutosnapTestContainer::get_or_create().await?;
     
     // Create real repository
-    container.exec(vec!["git", "init", "/test-repo"]).await?;
-    container.exec(vec!["sh", "-c", "cd /test-repo && git autosnap init"]).await?;
+    let cmd = ExecCommand::new(["git", "init", "/test-repo"]);
+    container.container.exec(cmd).await?;
+    
+    let cmd = ExecCommand::new(["sh", "-c", "cd /test-repo && git autosnap init"]);
+    container.container.exec(cmd).await?;
     
     // Start real watcher
-    container.exec(vec!["sh", "-c", "cd /test-repo && git autosnap start --daemon"]).await?;
+    let cmd = ExecCommand::new(["sh", "-c", "cd /test-repo && git autosnap start --daemon"]);
+    container.container.exec(cmd).await?;
     
     // Create rapid file changes
     use std::time::Duration;
     for i in 0..5 {
-        container.exec(vec![
+        let cmd = ExecCommand::new([
             "sh", "-c",
             &format!("echo 'change {}' > /test-repo/file.txt", i)
-        ]).await?;
+        ]);
+        container.container.exec(cmd).await?;
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     
@@ -489,9 +565,11 @@ async fn test_file_watcher_debounce() -> Result<()> {
     tokio::time::sleep(Duration::from_millis(300)).await;
     
     // Verify only one snapshot was created (debouncing worked)
-    let log = container.exec(vec![
+    let cmd = ExecCommand::new([
         "git", "--git-dir=/test-repo/.autosnap", "log", "--oneline"
-    ]).await?;
+    ]);
+    let result = container.container.exec(cmd).await?;
+    let log = String::from_utf8(result.stdout_to_vec().await?)?;
     
     let snapshot_count = log.lines().filter(|l| l.contains("AUTOSNAP")).count();
     assert_eq!(snapshot_count, 1, "Debouncing should create only one snapshot");
@@ -514,32 +592,44 @@ async fn test_file_watcher_debounce() -> Result<()> {
 #[tokio::test(flavor = "multi_thread", timeout = 10)]
 async fn test_git_snapshot_operations() -> Result<()> {
     use anyhow::Result;
+    use testcontainers::core::ExecCommand;
     let container = GitAutosnapTestContainer::get_or_create().await?;
     
     // Use real git commands
-    container.exec(vec!["git", "init", "/repo"]).await?;
-    container.exec(vec!["sh", "-c", "cd /repo && git autosnap init"]).await?;
+    let cmd = ExecCommand::new(["git", "init", "/repo"]);
+    container.container.exec(cmd).await?;
+    
+    let cmd = ExecCommand::new(["sh", "-c", "cd /repo && git autosnap init"]);
+    container.container.exec(cmd).await?;
     
     // Create real files
-    container.exec(vec!["sh", "-c", "echo 'content' > /repo/file.txt"]).await?;
-    container.exec(vec!["sh", "-c", "mkdir -p /repo/src && echo 'code' > /repo/src/main.rs"]).await?;
+    let cmd = ExecCommand::new(["sh", "-c", "echo 'content' > /repo/file.txt"]);
+    container.container.exec(cmd).await?;
+    
+    let cmd = ExecCommand::new(["sh", "-c", "mkdir -p /repo/src && echo 'code' > /repo/src/main.rs"]);
+    container.container.exec(cmd).await?;
     
     // Take real snapshot
-    container.exec(vec!["sh", "-c", "cd /repo && git autosnap once"]).await?;
+    let cmd = ExecCommand::new(["sh", "-c", "cd /repo && git autosnap once"]);
+    container.container.exec(cmd).await?;
     
     // Verify with real git commands
-    let log = container.exec(vec![
+    let cmd = ExecCommand::new([
         "git", "--git-dir=/repo/.autosnap", "log", "--format=%s"
-    ]).await?;
+    ]);
+    let result = container.container.exec(cmd).await?;
+    let log = String::from_utf8(result.stdout_to_vec().await?)?;
     
     // Check real commit message format
     assert!(log.contains("AUTOSNAP["), "Missing AUTOSNAP prefix");
     assert!(log.contains("T"), "Missing ISO8601 timestamp");
     
     // Verify real file contents in snapshot
-    let files = container.exec(vec![
+    let cmd = ExecCommand::new([
         "git", "--git-dir=/repo/.autosnap", "ls-tree", "-r", "HEAD"
-    ]).await?;
+    ]);
+    let result = container.container.exec(cmd).await?;
+    let files = String::from_utf8(result.stdout_to_vec().await?)?;
     
     assert!(files.contains("file.txt"));
     assert!(files.contains("src/main.rs"));
@@ -745,14 +835,17 @@ fn test_with_mock() {
 // ✅ GOOD: Container-based real test
 #[tokio::test]
 async fn test_with_real_behavior() {
+    use testcontainers::core::ExecCommand;
     let container = GitAutosnapTestContainer::get_or_create().await.unwrap();
     
     // Real file operations in container
-    container.exec(vec!["git", "autosnap", "init"]).await.unwrap();
+    let cmd = ExecCommand::new(["git", "autosnap", "init"]);
+    container.container.exec(cmd).await.unwrap();
     
     // Verify real results
-    let exists = container.exec(vec!["test", "-d", ".autosnap"]).await;
-    assert!(exists.is_ok(), "Directory was actually created");
+    let cmd = ExecCommand::new(["test", "-d", ".autosnap"]);
+    let result = container.container.exec(cmd).await;
+    assert!(result.is_ok(), "Directory was actually created");
 }
 ```
 
@@ -1118,9 +1211,17 @@ Install test dependencies using `cargo add` to ensure you get the latest compati
 
 ```bash
 # Essential for safe integration testing
-cargo add --dev testcontainers
-cargo add --dev bollard  # Docker API client
+# For async tests (default):
+cargo add --dev testcontainers@0.25
+
+# For synchronous/blocking tests:
+cargo add --dev testcontainers@0.25 --features blocking
+
+# If you need TLS support for Docker daemon over HTTPS:
+cargo add --dev testcontainers@0.25 --features tls
+
 # Note: Uses std::sync::LazyLock (Rust 1.80+) for shared containers
+# Note: bollard is no longer needed as testcontainers handles Docker communication
 ```
 
 ### Core Testing Libraries
@@ -1177,13 +1278,21 @@ cargo install cargo-tarpaulin
 # Run this script to set up all test dependencies
 
 # Container testing (recommended)
-cargo add --dev testcontainers bollard
+# Choose one based on your testing needs:
+# For async tests (default):
+cargo add --dev testcontainers@0.25
+
+# Or for synchronous/blocking tests:
+# cargo add --dev testcontainers@0.25 --features blocking
 
 # Core testing
 cargo add --dev tempfile assert_cmd predicates fs2
 
 # Async and property testing
 cargo add --dev tokio-test proptest quickcheck
+
+# Helper libraries for exec commands
+cargo add --dev anyhow shell-escape
 
 # Benchmarking and test organization
 cargo add --dev criterion test-case
