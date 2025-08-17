@@ -1,8 +1,8 @@
 use clap::{ArgAction, Parser, Subcommand};
 
-/// A minimal, production-ready CLI template.
+/// git-autosnap command-line interface
 #[derive(Parser, Debug, Clone)]
-#[command(name = "git-autosnap", version, about = "Example CLI", long_about = None)]
+#[command(name = "git-autosnap", version, about = "Record working tree snapshots in a local bare repo", long_about = None)]
 pub struct Cli {
     /// Increase verbosity (-v, -vv, -vvv). RUST_LOG overrides this.
     #[arg(short, long, action = ArgAction::Count)]
@@ -14,21 +14,32 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum Commands {
-    /// Print a greeting
-    Greet {
-        /// Name to greet
-        #[arg(value_name = "NAME")]
-        name: String,
+    /// Initialize .autosnap bare repository in the current Git repo
+    Init,
 
-        /// Uppercase output
+    /// Launch watcher (foreground by default)
+    Start {
+        /// Detach and run as a background daemon
         #[arg(long)]
-        upper: bool,
+        daemon: bool,
     },
 
-    /// Sum integers and print the result
-    Sum {
-        /// One or more integers
-        #[arg(value_name = "N", num_args = 1.., required = true)]
-        values: Vec<i64>,
+    /// Stop background watcher (reads PID from .autosnap/autosnap.pid)
+    Stop,
+
+    /// Exit 0 if running, non-zero otherwise
+    Status,
+
+    /// Take one snapshot and exit
+    Once,
+
+    /// Prune snapshots older than N days (default: 60)
+    Gc {
+        /// Retention in days
+        #[arg(long, value_name = "DAYS")]
+        days: Option<u32>,
     },
+
+    /// Stop watcher (if running) and remove .autosnap directory
+    Uninstall,
 }
