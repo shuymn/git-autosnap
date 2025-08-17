@@ -6,7 +6,6 @@ pub mod daemon;
 pub mod process;
 
 use anyhow::{Context, Result};
-use tracing::warn;
 
 /// Initialize tracing. RUST_LOG (if set) takes precedence.
 /// Otherwise, -v/-vv map to "debug"/"trace".
