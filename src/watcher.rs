@@ -46,6 +46,12 @@ pub fn start_foreground(repo_root: &Path, cfg: &AutosnapConfig) -> Result<()> {
         let wx = Watchexec::new(move |mut action| {
             // Quit on interrupt/terminate
             if action.signals().next().is_some() {
+                // Flush a final snapshot before quitting
+                if let Err(e) = gitlayer::snapshot_once(&root_for_handler) {
+                    error!(error = ?e, "final snapshot failed");
+                } else {
+                    info!("final snapshot created");
+                }
                 action.quit();
                 return action;
             }
