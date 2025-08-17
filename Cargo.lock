@@ -1069,6 +1069,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "watchexec",
+ "watchexec-events",
  "watchexec-filterer-ignore",
  "watchexec-signals",
 ]
