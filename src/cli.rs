@@ -42,4 +42,11 @@ pub enum Commands {
 
     /// Stop watcher (if running) and remove .autosnap directory
     Uninstall,
+
+    /// Open a snapshot in a subshell for exploration
+    Shell {
+        /// Commit SHA or ref to explore (defaults to HEAD/latest)
+        #[arg(value_name = "COMMIT")]
+        commit: Option<String>,
+    },
 }

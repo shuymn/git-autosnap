@@ -3,7 +3,7 @@ use git2::{Commit, IndexAddOption, Repository, Signature, Tree};
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 /// Discover the current repository root directory.
 pub fn repo_root() -> Result<PathBuf> {
@@ -259,4 +259,130 @@ fn iso8601_now_with_offset() -> String {
     use time::{OffsetDateTime, format_description::well_known::Rfc3339};
     let now = OffsetDateTime::now_local().unwrap_or_else(|_| OffsetDateTime::now_utc());
     now.format(&Rfc3339).unwrap_or_else(|_| now.to_string())
+}
+
+/// Open a snapshot in a subshell for exploration.
+pub fn snapshot_shell(repo_root: &Path, commit: Option<&str>) -> Result<()> {
+    let autosnap = autosnap_dir(repo_root);
+    if !autosnap.exists() {
+        bail!(".autosnap is missing; run `git autosnap init` first")
+    }
+
+    // Create a temporary directory
+    let temp_dir = tempfile::TempDir::new().context("failed to create temporary directory")?;
+    let temp_path = temp_dir.path();
+
+    // Open the autosnap bare repository
+    let repo = Repository::open(&autosnap)
+        .with_context(|| format!("failed to open autosnap repo at {}", autosnap.display()))?;
+
+    // Parse the commit reference
+    let commit_ref = commit.unwrap_or("HEAD");
+    let object = repo
+        .revparse_single(commit_ref)
+        .with_context(|| format!("failed to parse commit reference: {}", commit_ref))?;
+
+    let commit = object
+        .peel_to_commit()
+        .with_context(|| format!("failed to resolve {} to a commit", commit_ref))?;
+
+    let tree = commit.tree().context("failed to get tree from commit")?;
+
+    // Extract files from the tree to the temporary directory
+    extract_tree_to_path(&repo, &tree, temp_path)?;
+
+    // Format commit info for display
+    let short_id = commit
+        .as_object()
+        .short_id()
+        .context("failed to get short commit id")?;
+    let short_id_str = short_id.as_str().unwrap_or("unknown");
+    let message = commit.message().unwrap_or("no message");
+    let first_line = message.lines().next().unwrap_or(message);
+
+    println!("Opening snapshot in subshell:");
+    println!("  Commit: {} {}", short_id_str, first_line);
+    println!("  Location: {}", temp_path.display());
+    println!("  Type 'exit' to return and cleanup");
+    println!();
+
+    // Determine which shell to use
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+
+    // Launch subshell with modified prompt
+    let ps1 = format!("[autosnap:{}] $ ", short_id_str);
+
+    let status = Command::new(&shell)
+        .current_dir(temp_path)
+        .env("PS1", ps1)
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
+        .with_context(|| format!("failed to launch subshell: {}", shell))?;
+
+    // The temp_dir will be cleaned up automatically when it goes out of scope
+    if status.success() {
+        println!("\nSnapshot exploration completed, temporary directory cleaned up.");
+    } else {
+        println!("\nSubshell exited with status: {}", status);
+    }
+
+    Ok(())
+}
+
+/// Helper function to extract a git tree to a filesystem path
+fn extract_tree_to_path(repo: &Repository, tree: &Tree, base_path: &Path) -> Result<()> {
+    use git2::{ObjectType, TreeWalkMode, TreeWalkResult};
+
+    tree.walk(TreeWalkMode::PreOrder, |root, entry| {
+        let entry_path = if root.is_empty() {
+            PathBuf::from(entry.name().unwrap_or(""))
+        } else {
+            PathBuf::from(root).join(entry.name().unwrap_or(""))
+        };
+
+        let full_path = base_path.join(&entry_path);
+
+        match entry.kind() {
+            Some(ObjectType::Tree) => {
+                // Create directory
+                if let Err(e) = fs::create_dir_all(&full_path) {
+                    eprintln!("Failed to create directory {}: {}", full_path.display(), e);
+                }
+            }
+            Some(ObjectType::Blob) => {
+                // Extract file
+                if let Ok(object) = entry.to_object(repo)
+                    && let Some(blob) = object.as_blob()
+                {
+                    // Ensure parent directory exists
+                    if let Some(parent) = full_path.parent() {
+                        let _ = fs::create_dir_all(parent);
+                    }
+
+                    if let Err(e) = fs::write(&full_path, blob.content()) {
+                        eprintln!("Failed to write file {}: {}", full_path.display(), e);
+                    }
+
+                    // Try to preserve executable permissions
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        let filemode = entry.filemode();
+                        // Git stores executable as 0100755 (33261 in decimal)
+                        if filemode == 33261 {
+                            let permissions = fs::Permissions::from_mode(0o755);
+                            let _ = fs::set_permissions(&full_path, permissions);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        TreeWalkResult::Ok
+    })?;
+
+    Ok(())
 }
