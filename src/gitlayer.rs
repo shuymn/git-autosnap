@@ -60,11 +60,11 @@ pub fn snapshot_once(repo_root: &Path) -> Result<()> {
         .context("failed to find written tree")?;
 
     // Check if identical to HEAD to avoid duplicate commits
-    if let Some(prev_tree) = head_tree(&repo)? {
-        if prev_tree.id() == tree.id() {
-            // No changes; do not create a new commit
-            return Ok(());
-        }
+    if let Some(prev_tree) = head_tree(&repo)?
+        && prev_tree.id() == tree.id()
+    {
+        // No changes; do not create a new commit
+        return Ok(());
     }
 
     // Create author/committer signature from main repo config
@@ -97,17 +97,17 @@ pub fn snapshot_once(repo_root: &Path) -> Result<()> {
         .context("failed to create autosnap commit")?;
 
     // Print short id for script-friendliness per implementation plan
-    if let Ok(short) = repo.find_object(oid, None).and_then(|o| o.short_id()) {
-        if let Some(s) = short.as_str() {
-            println!("{}", s);
-        }
+    if let Ok(short) = repo.find_object(oid, None).and_then(|o| o.short_id())
+        && let Some(s) = short.as_str()
+    {
+        println!("{}", s);
     }
 
     Ok(())
 }
 
 /// Garbage collect (prune) snapshots older than the given number of days.
-/// 
+///
 /// Uses git command directly instead of libgit2 because libgit2 doesn't provide
 /// APIs for reflog expiration or garbage collection. These are considered
 /// "policy-based" housekeeping operations that libgit2 intentionally omits,
