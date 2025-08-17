@@ -67,6 +67,7 @@ struct WatcherState {
     tracked_ignores: HashSet<PathBuf>,
     binary_update_requested: Arc<AtomicBool>,
     binary_update_tx: Sender<bool>,
+    original_binary_metadata: Option<std::fs::Metadata>,
 }
 
 /// Control flow from a handler.
@@ -89,16 +90,26 @@ async fn run_watcher(repo_root: PathBuf, debounce_ms: u64) -> Result<()> {
     // State shared with handler
     let (binary_update_tx, binary_update_rx) = std::sync::mpsc::channel::<bool>();
     let binary_update_requested = Arc::new(AtomicBool::new(false));
+
+    // Capture original binary metadata at startup for hot-reload detection
+    let original_binary_metadata = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.metadata().ok());
+
     let state = Arc::new(WatcherState {
         repo_root: repo_root.clone(),
         tracked_ignores: tracked_ignore_files,
         binary_update_requested: binary_update_requested.clone(),
         binary_update_tx,
+        original_binary_metadata,
     });
+
+    // Create config first to properly initialize watchexec
+    let config = watchexec::Config::default();
 
     // Handler: trigger snapshot on any coalesced (throttled) event batch
     let handler_state = state.clone();
-    let wx = Watchexec::new(move |mut action| {
+    config.on_action(move |mut action| {
         // Check if any changed path is an ignore file we're tracking
         let paths: Vec<(&Path, Option<&FileType>)> = action.paths().collect();
         if let Flow::Quit = handle_ignore_file_updates(&paths, &handler_state) {
@@ -117,11 +128,17 @@ async fn run_watcher(repo_root: PathBuf, debounce_ms: u64) -> Result<()> {
         handle_fs_events(&paths, &handler_state);
 
         action
-    })
-    .context("failed to create watchexec")?;
+    });
 
-    // Configure watchexec
-    configure_watchexec(&wx, &repo_root, filterer, debounce_ms);
+    // Configure watchexec paths, filters and throttling
+    config.pathset([repo_root.to_path_buf()]);
+    config.filterer(filterer);
+    config.throttle(Duration::from_millis(debounce_ms));
+    config.on_error(|err: watchexec::ErrorHook| {
+        tracing::error!("watchexec error: {}", err.error);
+    });
+
+    let wx = Watchexec::with_config(config).context("failed to create watchexec")?;
 
     info!(path = %repo_root.display(), debounce_ms, "watching");
     let handle = wx.main();
@@ -167,20 +184,6 @@ async fn build_filterer_and_ignores(
     let filterer = IgnoreFilterer(filter);
 
     Ok((filterer, tracked_ignore_files))
-}
-
-fn configure_watchexec(
-    wx: &Watchexec,
-    repo_root: &Path,
-    filterer: IgnoreFilterer,
-    debounce_ms: u64,
-) {
-    wx.config.pathset([repo_root.to_path_buf()]);
-    wx.config.filterer(filterer);
-    wx.config.throttle(Duration::from_millis(debounce_ms));
-    wx.config.on_error(|err: watchexec::ErrorHook| {
-        tracing::error!("watchexec error: {}", err.error);
-    });
 }
 
 fn handle_ignore_file_updates(paths: &[(&Path, Option<&FileType>)], state: &WatcherState) -> Flow {
@@ -278,8 +281,14 @@ fn request_binary_update(state: &WatcherState) {
         }
     };
 
-    // Get current binary metadata
-    let original_metadata = exe_path.metadata().ok();
+    // Use the metadata captured at startup (before any updates)
+    let original_metadata = state.original_binary_metadata.clone();
+
+    // If we don't have original metadata, we can't detect changes
+    if original_metadata.is_none() {
+        warn!("no original binary metadata available, cannot detect updates");
+        return;
+    }
 
     // Spawn polling task
     let exe_for_poll = exe_path.clone();
