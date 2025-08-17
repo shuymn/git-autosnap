@@ -1,0 +1,48 @@
+# syntax=docker/dockerfile:1.6
+
+# Test image for container-based integration tests (feature: container-tests)
+# - Contains: git, bash, libgit2 runtime, and the git-autosnap binary in PATH
+# - Tag this image as: git-autosnap-test:latest
+
+FROM rust:1-bullseye AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+    git bash ca-certificates pkg-config libssl-dev libgit2-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+
+# Cache deps first (optional optimization)
+COPY Cargo.toml Cargo.lock ./
+RUN mkdir -p src && echo "fn main(){}" > src/main.rs \
+    && cargo build --release || true
+
+# Build the actual binary
+COPY . .
+RUN cargo install --path . --locked
+
+# Final test image — keep toolchain to avoid runtime lib mismatches and ease debugging
+FROM rust:1-bullseye
+ENV DEBIAN_FRONTEND=noninteractive
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends git bash ca-certificates; \
+    apt-get install -y --no-install-recommends libgit2-dev; \
+    rm -rf /var/lib/apt/lists/*
+
+# Copy the installed binary from builder and expose in PATH
+COPY --from=builder /usr/local/cargo/bin/git-autosnap /usr/local/bin/git-autosnap
+
+# Helpful defaults for tests; the container stays alive and ready for exec
+ENV PATH="/usr/local/bin:${PATH}" \
+    GIT_CONFIG_NOSYSTEM=1 \
+    HOME=/test-home
+RUN mkdir -p "$HOME" && chmod 755 "$HOME"
+
+# Set default branch to main for tests
+RUN git config --global init.defaultBranch main
+
+# Print a ready message then sleep forever so testcontainers can exec into it
+CMD ["bash", "-lc", "echo ready; sleep infinity"]

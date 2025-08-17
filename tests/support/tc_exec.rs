@@ -1,47 +1,40 @@
 #![cfg(feature = "container-tests")]
 
 // Drop-in helpers for executing commands inside testcontainers.
+// Compatible with testcontainers v0.25.0 using async API
 // Requires dev-deps when running with `--features container-tests`:
 // - anyhow = "1"
 // - shell-escape = "0.1"
-// - testcontainers = "<your-version>"
+// - testcontainers = "0.25"
+// - tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use shell_escape::unix::escape;
-use testcontainers::{Container, Image};
+use testcontainers::{ContainerAsync, Image, core::ExecCommand};
 
-#[cfg(feature = "container-tests")]
-pub fn exec_bash<I: Image>(c: &Container<'_, I>, cmd: &str) -> Result<String> {
-    // Adjust to your testcontainers version if fields differ
-    let out = c.exec(vec!["bash", "-lc", cmd]);
-    if out.exit_code != 0 {
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        bail!("command failed (code {}): {}", out.exit_code, stderr);
+/// Execute a bash command in a container and return stdout
+/// Uses the async API
+pub async fn exec_bash<I: Image>(c: &ContainerAsync<I>, cmd: &str) -> Result<String> {
+    let exec_cmd = ExecCommand::new(["bash", "-lc", cmd]);
+    let mut result = c.exec(exec_cmd).await.context("container exec failed")?;
+
+    // Read stdout and stderr first before checking exit code
+    // This ensures the command has completed
+    let stdout = result.stdout_to_vec().await?;
+    let stderr = result.stderr_to_vec().await?;
+
+    // Now check the exit code
+    let exit_code = result.exit_code().await?;
+    if exit_code != Some(0) {
+        let stderr_str = String::from_utf8_lossy(&stderr);
+        bail!("command failed (code {:?}): {}", exit_code, stderr_str);
     }
-    Ok(String::from_utf8(out.stdout).context("invalid utf8 on stdout")?)
+
+    Ok(String::from_utf8(stdout).context("invalid utf8 on stdout")?)
 }
 
-#[cfg(feature = "container-tests")]
-pub fn exec_in<I: Image>(c: &Container<'_, I>, cwd: &str, cmd: &str) -> Result<String> {
+/// Execute a command in a specific directory
+pub async fn exec_in<I: Image>(c: &ContainerAsync<I>, cwd: &str, cmd: &str) -> Result<String> {
     let script = format!("cd {} && {}", escape(cwd.into()), cmd);
-    exec_bash(c, &script)
+    exec_bash(c, &script).await
 }
-
-// Async variants (if using async runners). Keep here for reference; gate as needed.
-// use testcontainers::core::ExecCommand;
-// pub async fn exec_bash_async<I: Image>(c: &Container<'_, I>, cmd: &str) -> Result<String> {
-//     let out = c
-//         .exec(ExecCommand { cmd: vec!["bash".into(), "-lc".into(), cmd.into()], ..Default::default() })
-//         .await
-//         .context("container exec failed")?;
-//     if out.exit_code != 0 {
-//         let stderr = String::from_utf8_lossy(&out.stderr);
-//         bail!("command failed (code {}): {}", out.exit_code, stderr);
-//     }
-//     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
-// }
-// pub async fn exec_in_async<I: Image>(c: &Container<'_, I>, cwd: &str, cmd: &str) -> Result<String> {
-//     let script = format!("cd {} && {}", escape(cwd.into()), cmd);
-//     exec_bash_async(c, &script).await
-// }
-
