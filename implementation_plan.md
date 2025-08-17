@@ -13,6 +13,8 @@ This plan translates the docs in `docs/spec.md`, `docs/testing.md`, and `docs/st
 - ✅ Additional `shell` command for interactive snapshot exploration with skim
 - ✅ Comprehensive signal handling (SIGTERM, SIGINT, SIGHUP, SIGUSR1, SIGUSR2)
 - ✅ Graceful daemon update during installation via SIGUSR2
+- ✅ Self-restart on ignore file changes (automatic filter refresh)
+- ✅ Hot-reload binary updates with PID preservation via exec()
 - ✅ ISO8601 timestamps with timezone offset support using `time` crate
 - ✅ Git config integration for `autosnap.debounce-ms` and `autosnap.gc.prune-days`
 - ✅ Process control with PID file locking using `fs2`
@@ -40,16 +42,24 @@ The `gc` command has been updated to match Git's semantics:
 The daemon now supports comprehensive signal handling for improved operations:
 
 1. **SIGTERM/SIGINT**: Graceful shutdown with final snapshot creation
-2. **SIGHUP**: Placeholder for future configuration reload functionality  
+2. **SIGHUP**: Reserved for future configuration reload functionality  
 3. **SIGUSR1**: Force immediate snapshot on demand (`kill -USR1 $(cat .autosnap/autosnap.pid)`)
-4. **SIGUSR2**: Graceful daemon update signal - creates final snapshot before shutdown
+4. **SIGUSR2**: Hot-reload binary update - polls for binary change and performs exec() to maintain PID
 
 ### Install Task Enhancement
 The `task install` command now:
+- Performs atomic binary replacement (copy to .new, then rename)
 - Detects running daemons before installation
-- Sends SIGUSR2 for graceful shutdown with final snapshot
-- Safely replaces the binary
-- Reminds users to restart the daemon after update
+- Sends SIGUSR2 to trigger automatic hot-reload
+- Daemon automatically restarts with new binary while maintaining same PID
+- Zero downtime updates for running daemons
+
+### Ignore File Change Detection
+The daemon automatically detects changes to ignore files and self-restarts:
+- Tracks all ignore files discovered by watchexec (`.gitignore`, `.git/info/exclude`, global ignores)
+- Immediately performs exec() when any tracked ignore file changes
+- Ensures filter consistency without manual restart
+- Fixes stale filter issue when .gitignore patterns are added/removed
 
 ## Crate Structure (Modules)
 
@@ -290,16 +300,16 @@ Minimal dev-deps (aligning with Appendix): `tempfile`, `assert_cmd`, `predicates
 ## Future Enhancements
 
 ### Potential Improvements
-1. **Config Reload on SIGHUP**: Implement dynamic configuration reloading without restart
-2. **Binary Re-exec on SIGUSR2**: Complete implementation for true hot-reload capability
-3. **Compression**: Add snapshot compression options to reduce disk usage
-4. **Remote Backup**: Optional remote repository sync for disaster recovery
-5. **Web UI**: Simple web interface for browsing snapshots
-6. **Diff Viewer**: Built-in diff between snapshots
-7. **Restore Command**: Direct restore from snapshot to working tree
-8. **Metrics**: Prometheus-compatible metrics endpoint for monitoring
-9. **Windows Support**: Extend beyond Unix platforms
-10. **Performance Optimizations**: Parallel file processing for large repositories
+1. **Compression**: Add snapshot compression options to reduce disk usage
+2. **Remote Backup**: Optional remote repository sync for disaster recovery
+3. **Web UI**: Simple web interface for browsing snapshots
+4. **Diff Viewer**: Built-in diff between snapshots
+5. **Restore Command**: Direct restore from snapshot to working tree
+6. **Metrics**: Prometheus-compatible metrics endpoint for monitoring
+7. **Windows Support**: Extend beyond Unix platforms
+8. **Performance Optimizations**: Parallel file processing for large repositories
+9. **Selective Watching**: Allow including/excluding specific directories from watching
+10. **Snapshot Annotations**: Add custom messages or tags to snapshots
 
 ### Known Limitations
 - Unix/macOS only (Windows not supported)
@@ -314,6 +324,8 @@ Minimal dev-deps (aligning with Appendix): `tempfile`, `assert_cmd`, `predicates
 ### Quality Metrics
 - All commands functional and tested
 - Signal handling for graceful operations
+- Self-restart capability for ignore file changes and binary updates
+- Zero-downtime updates via exec() with PID preservation
 - Container-based testing ensures safety
 - Follows Rust best practices per `docs/style.md`
 - Comprehensive error handling with context
