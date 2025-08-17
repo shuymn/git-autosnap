@@ -36,8 +36,6 @@ pre-commit:
       tags: [testing]
       fail_text: "❌ Unit tests failed. Fix failing tests before committing."
 
-# Removed debug-check as it was blocking legitimate CLI output statements
-
   # Skip conditions for pre-commit
   skip:
     - merge: true

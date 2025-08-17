@@ -136,24 +136,9 @@ jobs:
         env:
           RUSTDOCFLAGS: "-D warnings"
 
-  debug-check:
-    name: Debug Statement Check
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
-
-      - name: Check for debug statements
-        run: |
-          if grep -r "dbg!\|println!\|eprintln!" --include="*.rs" src/ 2>/dev/null; then
-            echo "::error::Found debug statements in code. Remove dbg!, println!, or eprintln! macros."
-            exit 1
-          fi
-          echo "✅ No debug statements found"
-
   test:
     name: Test Suite
-    needs: [fmt, clippy, check, docs, debug-check]
+    needs: [fmt, clippy, check, docs]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -195,7 +180,7 @@ jobs:
 
   dependencies:
     name: Dependency Audit
-    needs: [fmt, clippy, check, docs, debug-check]
+    needs: [fmt, clippy, check, docs]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
