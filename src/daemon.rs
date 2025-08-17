@@ -2,6 +2,8 @@ use crate::config::AutosnapConfig;
 use crate::process::{pid_file, status};
 use anyhow::{Context, Result};
 use libc;
+use nix::sys::signal::{self, Signal};
+use nix::unistd::Pid;
 use std::fs;
 use std::os::unix::process::CommandExt;
 use std::path::Path;
@@ -43,20 +45,21 @@ pub fn stop(repo_root: &Path) -> Result<()> {
         println!("stopped");
         return Ok(());
     }
-    let pid = fs::read_to_string(&pid_path)
+    let pid_str = fs::read_to_string(&pid_path)
         .with_context(|| format!("failed to read {}", pid_path.display()))?;
-    let pid = pid.trim();
+    let pid_num: i32 = pid_str
+        .trim()
+        .parse()
+        .with_context(|| format!("invalid PID in file: {}", pid_str.trim()))?;
 
-    let status = Command::new("/bin/kill").arg("-TERM").arg(pid).status();
-    match status {
-        Ok(s) if s.success() => {
-            println!("sent SIGTERM to {}", pid);
-        }
-        Ok(s) => {
-            eprintln!("kill exited with status: {}", s);
+    // Send SIGTERM using nix for type-safe signal handling
+    let pid = Pid::from_raw(pid_num);
+    match signal::kill(pid, Signal::SIGTERM) {
+        Ok(()) => {
+            println!("sent SIGTERM to {}", pid_num);
         }
         Err(e) => {
-            eprintln!("failed to execute kill: {}", e);
+            eprintln!("failed to send signal: {}", e);
         }
     }
 
