@@ -54,12 +54,14 @@ pub fn run(cli: cli::Cli) -> Result<()> {
             }
         }
         Commands::Stop => {
+            let root = gitlayer::repo_root()?;
             warn!("stop is not implemented yet");
-            daemon::stop()?;
+            daemon::stop(&root)?;
         }
         Commands::Status => {
+            let root = gitlayer::repo_root()?;
             warn!("status is not implemented yet");
-            process::status()?;
+            process::status(&root)?;
         }
         Commands::Once => {
             let root = gitlayer::repo_root()?;
