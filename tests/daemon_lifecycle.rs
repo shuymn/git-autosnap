@@ -30,7 +30,12 @@ async fn daemon_start_status_stop() -> Result<()> {
     exec_in(&container, "/repo", "git autosnap stop").await?;
 
     // Status should be non-zero; capture code without failing the helper
-    let out = exec_in(&container, "/repo", "sh -lc 'git autosnap status; echo EXIT:$?; true'").await?;
+    let out = exec_in(
+        &container,
+        "/repo",
+        "sh -lc 'git autosnap status; echo EXIT:$?; true'",
+    )
+    .await?;
     assert!(out.contains("EXIT:1"), "unexpected status output: {}", out);
     // And pidfile should be gone
     exec_in(&container, "/repo", "test ! -f .autosnap/autosnap.pid").await?;
@@ -54,7 +59,12 @@ async fn daemon_creates_snapshot_on_change() -> Result<()> {
     exec_in(&container, "/repo", "sh -lc 'sleep 1'").await?;
 
     // Expect at least one commit in .autosnap
-    let subject = exec_in(&container, "/repo", "git --git-dir=.autosnap log -1 --format=%s").await?;
+    let subject = exec_in(
+        &container,
+        "/repo",
+        "git --git-dir=.autosnap log -1 --format=%s",
+    )
+    .await?;
     let re = predicate::str::is_match(r"^AUTOSNAP\[[^\]]+\] \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:")?;
     assert!(re.eval(subject.trim()), "bad subject: {}", subject);
 
@@ -62,4 +72,3 @@ async fn daemon_creates_snapshot_on_change() -> Result<()> {
     exec_in(&container, "/repo", "git autosnap stop").await?;
     Ok(())
 }
-

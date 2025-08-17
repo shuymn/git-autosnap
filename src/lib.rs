@@ -1,9 +1,9 @@
 pub mod cli;
 pub mod config;
-pub mod gitlayer;
-pub mod watcher;
 pub mod daemon;
+pub mod gitlayer;
 pub mod process;
+pub mod watcher;
 
 use anyhow::{Context, Result};
 
@@ -72,7 +72,9 @@ pub fn run(cli: cli::Cli) -> Result<()> {
         Commands::Gc { days } => {
             let root = gitlayer::repo_root()?;
             let mut cfg = config::AutosnapConfig::load(&root)?;
-            if let Some(d) = days { cfg.prune_days = d; }
+            if let Some(d) = days {
+                cfg.prune_days = d;
+            }
             gitlayer::gc(&root, cfg.prune_days)?;
         }
         Commands::Uninstall => {

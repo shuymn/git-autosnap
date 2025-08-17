@@ -1,6 +1,6 @@
 use assert_cmd::Command;
-use tempfile::tempdir;
 use git_autosnap::config::AutosnapConfig;
+use tempfile::tempdir;
 
 #[test]
 fn config_loads_from_repo_config() {
@@ -14,10 +14,12 @@ fn config_loads_from_repo_config() {
 
     // Set our autosnap.* keys
     let mut cmd = Command::new("git");
-    cmd.current_dir(root).args(["config", "autosnap.debounce-ms", "321"]);
+    cmd.current_dir(root)
+        .args(["config", "autosnap.debounce-ms", "321"]);
     cmd.assert().success();
     let mut cmd = Command::new("git");
-    cmd.current_dir(root).args(["config", "autosnap.gc.prune-days", "5"]);
+    cmd.current_dir(root)
+        .args(["config", "autosnap.gc.prune-days", "5"]);
     cmd.assert().success();
 
     let cfg = AutosnapConfig::load(root).expect("load config");
