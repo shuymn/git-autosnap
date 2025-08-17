@@ -117,6 +117,37 @@ pub fn run(cli: cli::Cli) -> Result<()> {
                 &paths,
             )?;
         }
+        Commands::Diff {
+            commit1,
+            commit2,
+            interactive,
+            stat,
+            name_only,
+            name_status,
+            paths,
+        } => {
+            let root = gitlayer::repo_root()?;
+
+            // Determine output format
+            let format = if stat {
+                gitlayer::DiffFormat::Stat
+            } else if name_only {
+                gitlayer::DiffFormat::NameOnly
+            } else if name_status {
+                gitlayer::DiffFormat::NameStatus
+            } else {
+                gitlayer::DiffFormat::Unified
+            };
+
+            gitlayer::diff(
+                &root,
+                commit1.as_deref(),
+                commit2.as_deref(),
+                interactive,
+                format,
+                &paths,
+            )?;
+        }
     }
     Ok(())
 }

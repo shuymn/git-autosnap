@@ -1,4 +1,5 @@
 use anyhow::{Context, Result, bail};
+use console::Style;
 use git2::{Commit, IndexAddOption, Repository, Signature, Tree};
 use skim::Skim;
 use skim::prelude::{SkimItemReader, SkimOptionsBuilder};
@@ -751,5 +752,332 @@ pub fn restore(
         println!("\nDRY RUN completed. No files were modified.");
     }
 
+    Ok(())
+}
+
+/// Output format for diff display
+#[derive(Debug, Clone, Copy)]
+pub enum DiffFormat {
+    /// Full unified diff output
+    Unified,
+    /// Statistics only (files changed, insertions, deletions)
+    Stat,
+    /// Only show names of changed files
+    NameOnly,
+    /// Show names and status of changed files (Added, Modified, Deleted)
+    NameStatus,
+}
+
+/// Show diff between snapshots or working tree
+///
+/// # Arguments
+/// * `repo_root` - Path to the repository root
+/// * `commit1` - First commit ref (None means working tree)
+/// * `commit2` - Second commit ref (None means HEAD)
+/// * `interactive` - Whether to use interactive commit selection
+/// * `format` - Output format for the diff
+/// * `paths` - Specific paths to diff (empty means all)
+///
+/// # Returns
+/// * `Ok(())` on success
+/// * `Err` on failure
+pub fn diff(
+    repo_root: &Path,
+    commit1: Option<&str>,
+    commit2: Option<&str>,
+    interactive: bool,
+    format: DiffFormat,
+    paths: &[String],
+) -> Result<()> {
+    let autosnap_path = repo_root.join(".autosnap");
+    let repo = Repository::open(&autosnap_path).context("failed to open .autosnap repository")?;
+
+    // Set workdir for proper working tree access
+    repo.set_workdir(repo_root, false)
+        .context("failed to set working directory")?;
+
+    // Handle interactive mode for commit selection
+    let (actual_commit1, actual_commit2) = if interactive {
+        println!("Select first commit to compare (or press ESC to use working tree):");
+        let first = select_commit_interactive(&autosnap_path)?;
+
+        println!("Select second commit to compare (or press ESC to use HEAD):");
+        let second = select_commit_interactive(&autosnap_path)?;
+
+        (first, second)
+    } else {
+        (commit1.map(String::from), commit2.map(String::from))
+    };
+
+    // Resolve commits - special handling for working tree comparisons
+    let (tree1, tree2) = match (actual_commit1, actual_commit2) {
+        // No arguments: compare working tree to HEAD
+        (None, None) => {
+            // Working tree
+            let mut index = repo.index()?;
+            index.clear()?;
+            index.add_all(["*"], IndexAddOption::DEFAULT, None)?;
+            // Remove .autosnap and .git directories
+            let _ = index.remove_all([".autosnap", ".git"], None);
+            index.write()?;
+            let tree_oid = index.write_tree()?;
+            let work_tree = repo.find_tree(tree_oid)?;
+
+            // HEAD
+            let head = repo
+                .head()
+                .context("no snapshots found in .autosnap repository")?;
+            let head_commit = head.peel_to_commit().context("failed to get HEAD commit")?;
+            let head_tree = head_commit.tree()?;
+
+            (Some(work_tree), Some(head_tree))
+        }
+        // One argument: compare that commit to working tree
+        (Some(ref commit_ref), None) => {
+            let obj = repo
+                .revparse_single(commit_ref)
+                .with_context(|| format!("failed to find commit: {}", commit_ref))?;
+            let commit = obj
+                .peel_to_commit()
+                .with_context(|| format!("failed to resolve commit: {}", commit_ref))?;
+            let commit_tree = commit.tree()?;
+
+            // Working tree
+            let mut index = repo.index()?;
+            index.clear()?;
+            index.add_all(["*"], IndexAddOption::DEFAULT, None)?;
+            // Remove .autosnap and .git directories
+            let _ = index.remove_all([".autosnap", ".git"], None);
+            index.write()?;
+            let tree_oid = index.write_tree()?;
+            let work_tree = repo.find_tree(tree_oid)?;
+
+            (Some(commit_tree), Some(work_tree))
+        }
+        // Two arguments: compare two commits
+        (Some(ref commit1_ref), Some(ref commit2_ref)) => {
+            let obj1 = repo
+                .revparse_single(commit1_ref)
+                .with_context(|| format!("failed to find commit: {}", commit1_ref))?;
+            let commit1 = obj1
+                .peel_to_commit()
+                .with_context(|| format!("failed to resolve commit: {}", commit1_ref))?;
+
+            let obj2 = repo
+                .revparse_single(commit2_ref)
+                .with_context(|| format!("failed to find commit: {}", commit2_ref))?;
+            let commit2 = obj2
+                .peel_to_commit()
+                .with_context(|| format!("failed to resolve commit: {}", commit2_ref))?;
+
+            (Some(commit1.tree()?), Some(commit2.tree()?))
+        }
+        // None for first but Some for second doesn't make sense, treat as working tree vs commit2
+        (None, Some(ref commit_ref)) => {
+            // Working tree
+            let mut index = repo.index()?;
+            index.clear()?;
+            index.add_all(["*"], IndexAddOption::DEFAULT, None)?;
+            // Remove .autosnap and .git directories
+            let _ = index.remove_all([".autosnap", ".git"], None);
+            index.write()?;
+            let tree_oid = index.write_tree()?;
+            let work_tree = repo.find_tree(tree_oid)?;
+
+            let obj = repo
+                .revparse_single(commit_ref)
+                .with_context(|| format!("failed to find commit: {}", commit_ref))?;
+            let commit = obj
+                .peel_to_commit()
+                .with_context(|| format!("failed to resolve commit: {}", commit_ref))?;
+
+            (Some(work_tree), Some(commit.tree()?))
+        }
+    };
+
+    // Create diff options
+    let mut diff_opts = git2::DiffOptions::new();
+
+    // Add path filters if specified
+    for path in paths {
+        diff_opts.pathspec(path);
+    }
+
+    // Perform the diff
+    let diff = match (tree1.as_ref(), tree2.as_ref()) {
+        (Some(t1), Some(t2)) => repo.diff_tree_to_tree(Some(t1), Some(t2), Some(&mut diff_opts))?,
+        _ => {
+            bail!("failed to create diff between specified commits");
+        }
+    };
+
+    // Format and display the diff based on requested format
+    match format {
+        DiffFormat::Unified => {
+            print_unified_diff(&diff)?;
+        }
+        DiffFormat::Stat => {
+            print_diff_stats(&diff)?;
+        }
+        DiffFormat::NameOnly => {
+            print_diff_name_only(&diff)?;
+        }
+        DiffFormat::NameStatus => {
+            print_diff_name_status(&diff)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Print unified diff output using the similar crate for better formatting
+fn print_unified_diff(diff: &git2::Diff) -> Result<()> {
+    // Set up styles for different diff elements
+    let added_style = Style::new().green();
+    let removed_style = Style::new().red();
+    let context_style = Style::new().dim();
+    let header_style = Style::new().cyan().bold();
+
+    // For each file in the diff
+    diff.foreach(
+        &mut |delta, _progress| {
+            // Print file header
+            let old_path = delta
+                .old_file()
+                .path()
+                .and_then(|p| p.to_str())
+                .unwrap_or("unknown");
+            let new_path = delta
+                .new_file()
+                .path()
+                .and_then(|p| p.to_str())
+                .unwrap_or("unknown");
+
+            println!("{}", header_style.apply_to(format!("--- {}", old_path)));
+            println!("{}", header_style.apply_to(format!("+++ {}", new_path)));
+            true
+        },
+        None,
+        Some(&mut |_delta, _hunk| {
+            // Hunk callback - we'll handle in line callback
+            true
+        }),
+        Some(&mut |_delta, hunk, line| {
+            let content = std::str::from_utf8(line.content()).unwrap_or("");
+
+            // Handle hunk headers specially
+            if let Some(hunk) = hunk {
+                let header = format!(
+                    "@@ -{},{} +{},{} @@",
+                    hunk.old_start(),
+                    hunk.old_lines(),
+                    hunk.new_start(),
+                    hunk.new_lines()
+                );
+                if line.origin() == '@' {
+                    println!("{}", header_style.apply_to(header));
+                    return true;
+                }
+            }
+
+            // Apply appropriate styling based on line type
+            match line.origin() {
+                '+' => print!("{}", added_style.apply_to(format!("+{}", content))),
+                '-' => print!("{}", removed_style.apply_to(format!("-{}", content))),
+                ' ' => print!("{}", context_style.apply_to(format!(" {}", content))),
+                _ => print!("{}", content),
+            }
+            true
+        }),
+    )?;
+
+    Ok(())
+}
+
+/// Print diff statistics
+fn print_diff_stats(diff: &git2::Diff) -> Result<()> {
+    let stats = diff.stats()?;
+
+    println!(
+        " {} files changed, {} insertions(+), {} deletions(-)",
+        stats.files_changed(),
+        stats.insertions(),
+        stats.deletions()
+    );
+
+    // Print per-file stats
+    diff.foreach(
+        &mut |delta, _progress| {
+            let path = delta
+                .new_file()
+                .path()
+                .or_else(|| delta.old_file().path())
+                .and_then(|p| p.to_str())
+                .unwrap_or("unknown");
+
+            print!(" {}", path);
+            true
+        },
+        None,
+        None,
+        None,
+    )?;
+
+    Ok(())
+}
+
+/// Print only file names that changed
+fn print_diff_name_only(diff: &git2::Diff) -> Result<()> {
+    diff.foreach(
+        &mut |delta, _progress| {
+            let path = delta
+                .new_file()
+                .path()
+                .or_else(|| delta.old_file().path())
+                .and_then(|p| p.to_str())
+                .unwrap_or("unknown");
+
+            println!("{}", path);
+            true
+        },
+        None,
+        None,
+        None,
+    )?;
+    Ok(())
+}
+
+/// Print file names with their status
+fn print_diff_name_status(diff: &git2::Diff) -> Result<()> {
+    diff.foreach(
+        &mut |delta, _progress| {
+            let path = delta
+                .new_file()
+                .path()
+                .or_else(|| delta.old_file().path())
+                .and_then(|p| p.to_str())
+                .unwrap_or("unknown");
+
+            let status = match delta.status() {
+                git2::Delta::Added => "A",
+                git2::Delta::Deleted => "D",
+                git2::Delta::Modified => "M",
+                git2::Delta::Renamed => "R",
+                git2::Delta::Copied => "C",
+                git2::Delta::Ignored => "I",
+                git2::Delta::Untracked => "?",
+                git2::Delta::Typechange => "T",
+                git2::Delta::Unmodified => "U",
+                git2::Delta::Conflicted => "C",
+                _ => "?",
+            };
+
+            println!("{}\t{}", status, path);
+            true
+        },
+        None,
+        None,
+        None,
+    )?;
     Ok(())
 }

@@ -84,4 +84,35 @@ pub enum Commands {
         #[arg(value_name = "PATH")]
         paths: Vec<String>,
     },
+
+    /// Show diff between snapshots or working tree
+    Diff {
+        /// First commit SHA or ref (defaults to working tree if only one commit provided)
+        #[arg(value_name = "COMMIT1")]
+        commit1: Option<String>,
+
+        /// Second commit SHA or ref (defaults to HEAD if not provided)
+        #[arg(value_name = "COMMIT2")]
+        commit2: Option<String>,
+
+        /// Interactive mode: select commits from list using skim
+        #[arg(short, long)]
+        interactive: bool,
+
+        /// Show only stats (files changed, insertions, deletions)
+        #[arg(long, conflicts_with = "name_only", conflicts_with = "name_status")]
+        stat: bool,
+
+        /// Show only names of changed files
+        #[arg(long, conflicts_with = "stat", conflicts_with = "name_status")]
+        name_only: bool,
+
+        /// Show names and status of changed files
+        #[arg(long, conflicts_with = "stat", conflicts_with = "name_only")]
+        name_status: bool,
+
+        /// Specific paths to diff (if empty, diffs all)
+        #[arg(value_name = "PATH")]
+        paths: Vec<String>,
+    },
 }

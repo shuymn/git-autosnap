@@ -46,6 +46,23 @@ The daemon now supports comprehensive signal handling for improved operations:
 3. **SIGUSR1**: Force immediate snapshot on demand (`kill -USR1 $(cat .autosnap/autosnap.pid)`)
 4. **SIGUSR2**: Hot-reload binary update - polls for binary change and performs exec() to maintain PID
 
+### Diff Command Implementation (2025-08-18)
+The `diff` command provides comprehensive comparison between snapshots and working tree:
+
+**Features**:
+- Multiple comparison modes: working tree vs HEAD, commit vs working tree, commit vs commit
+- Interactive commit selection with `-i` flag using skim fuzzy finder
+- Multiple output formats: unified diff (default), stats, name-only, name-status
+- Path filtering for targeted comparisons
+- Enhanced terminal output with colored diff using console crate
+- Proper exclusion of .git and .autosnap directories from working tree comparisons
+
+**Implementation**:
+- Uses libgit2's diff APIs for efficient tree comparison
+- Supports all standard git diff output formats
+- Terminal-friendly colored output for better readability
+- Integrates with existing interactive commit selection infrastructure
+
 ### Restore Command Implementation (2025-08-18)
 The `restore` command provides safe recovery from snapshots:
 
@@ -146,12 +163,21 @@ src/
   - Interactive mode (`-i`) uses skim for commit selection
   - Extracts snapshot to temp directory with proper permissions
   - Launches subshell with custom prompt showing commit SHA
-- ✅ `git autosnap restore [COMMIT] [PATH...] [--force] [--dry-run] [--full] [-i]` — **NEW**: Restore files from snapshot
+- ✅ `git autosnap restore [COMMIT] [PATH...] [--force] [--dry-run] [--full] [-i]` — Restore files from snapshot
   - Interactive mode (`-i`) uses skim for commit selection
   - `--force` overrides safety check for uncommitted changes
   - `--dry-run` previews changes without modifying files
   - `--full` removes files not present in snapshot (excludes .git/.autosnap)
   - Supports partial restore with specific paths
+- ✅ `git autosnap diff [COMMIT1] [COMMIT2] [PATH...] [--stat] [--name-only] [--name-status] [-i]` — **NEW**: Show diff between snapshots
+  - No arguments: compares working tree to HEAD
+  - One argument: compares specified commit to working tree
+  - Two arguments: compares two commits
+  - Interactive mode (`-i`) uses skim for commit selection
+  - `--stat` shows only statistics (files changed, insertions, deletions)
+  - `--name-only` shows only names of changed files
+  - `--name-status` shows names and status of changed files
+  - Supports path filtering for specific files/directories
 
 Return codes and output are script‑friendly; errors use `anyhow` with context.
 
@@ -326,7 +352,7 @@ Minimal dev-deps (aligning with Appendix): `tempfile`, `assert_cmd`, `predicates
 1. **Compression**: Add snapshot compression options to reduce disk usage
 2. **Remote Backup**: Optional remote repository sync for disaster recovery
 3. **Web UI**: Simple web interface for browsing snapshots
-4. **Diff Viewer**: Built-in diff between snapshots
+4. ~~**Diff Viewer**: Built-in diff between snapshots~~ ✅ **IMPLEMENTED (2025-08-18)**
 5. ~~**Restore Command**: Direct restore from snapshot to working tree~~ ✅ **IMPLEMENTED (2025-08-18)**
 6. **Metrics**: Prometheus-compatible metrics endpoint for monitoring
 7. **Windows Support**: Extend beyond Unix platforms
