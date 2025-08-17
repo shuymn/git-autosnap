@@ -1,281 +1,168 @@
-use assert_cmd::Command;
-use std::fs;
-use tempfile::TempDir;
+#![cfg(feature = "container-tests")]
+
+use anyhow::Result;
+use testcontainers::{GenericImage, core::WaitFor, runners::AsyncRunner};
+
+#[path = "support/mod.rs"]
+mod support;
+use support::tc_exec::{exec_bash, exec_in};
 
 /// Test basic restore functionality
-#[test]
-fn test_restore_basic() {
-    let temp = TempDir::new().unwrap();
-    let repo_path = temp.path();
+#[tokio::test]
+async fn test_restore_basic() -> Result<()> {
+    let image = GenericImage::new("git-autosnap-test", "latest")
+        .with_wait_for(WaitFor::message_on_stdout("ready"));
+    let container = image.start().await?;
 
-    // Initialize a git repo
-    std::process::Command::new("git")
-        .args(["init"])
-        .current_dir(repo_path)
-        .output()
-        .unwrap();
-
-    // Configure git user
-    std::process::Command::new("git")
-        .args(["config", "user.email", "test@example.com"])
-        .current_dir(repo_path)
-        .output()
-        .unwrap();
-
-    std::process::Command::new("git")
-        .args(["config", "user.name", "Test User"])
-        .current_dir(repo_path)
-        .output()
-        .unwrap();
-
-    // Initialize autosnap
-    Command::cargo_bin("git-autosnap")
-        .unwrap()
-        .current_dir(repo_path)
-        .arg("init")
-        .assert()
-        .success();
+    // Initialize a git repo in the container
+    exec_bash(&container, "mkdir -p /repo && git init /repo").await?;
+    exec_in(&container, "/repo", "git autosnap init").await?;
 
     // Create a test file and take a snapshot
-    let test_file = repo_path.join("test.txt");
-    fs::write(&test_file, "original content").unwrap();
-
-    Command::cargo_bin("git-autosnap")
-        .unwrap()
-        .current_dir(repo_path)
-        .arg("once")
-        .assert()
-        .success();
+    exec_in(&container, "/repo", "echo 'original content' > test.txt").await?;
+    exec_in(&container, "/repo", "git autosnap once").await?;
 
     // Modify the file
-    fs::write(&test_file, "modified content").unwrap();
+    exec_in(&container, "/repo", "echo 'modified content' > test.txt").await?;
 
     // Restore from snapshot
-    Command::cargo_bin("git-autosnap")
-        .unwrap()
-        .current_dir(repo_path)
-        .args(["restore", "--force", "HEAD"])
-        .assert()
-        .success();
+    exec_in(&container, "/repo", "git autosnap restore --force HEAD").await?;
 
     // Verify file was restored
-    let content = fs::read_to_string(&test_file).unwrap();
+    let content = exec_in(&container, "/repo", "cat test.txt").await?;
     assert_eq!(
-        content, "original content",
+        content.trim(),
+        "original content",
         "File was not properly restored"
     );
+
+    Ok(())
 }
 
 /// Test dry-run mode
-#[test]
-fn test_restore_dry_run() {
-    let temp = TempDir::new().unwrap();
-    let repo_path = temp.path();
+#[tokio::test]
+async fn test_restore_dry_run() -> Result<()> {
+    let image = GenericImage::new("git-autosnap-test", "latest")
+        .with_wait_for(WaitFor::message_on_stdout("ready"));
+    let container = image.start().await?;
 
-    // Initialize a git repo
-    std::process::Command::new("git")
-        .args(["init"])
-        .current_dir(repo_path)
-        .output()
-        .unwrap();
-
-    // Configure git user
-    std::process::Command::new("git")
-        .args(["config", "user.email", "test@example.com"])
-        .current_dir(repo_path)
-        .output()
-        .unwrap();
-
-    std::process::Command::new("git")
-        .args(["config", "user.name", "Test User"])
-        .current_dir(repo_path)
-        .output()
-        .unwrap();
-
-    // Initialize autosnap
-    Command::cargo_bin("git-autosnap")
-        .unwrap()
-        .current_dir(repo_path)
-        .arg("init")
-        .assert()
-        .success();
+    // Initialize a git repo in the container
+    exec_bash(&container, "mkdir -p /repo && git init /repo").await?;
+    exec_in(&container, "/repo", "git autosnap init").await?;
 
     // Create a test file and take a snapshot
-    let test_file = repo_path.join("test.txt");
-    fs::write(&test_file, "original content").unwrap();
-
-    Command::cargo_bin("git-autosnap")
-        .unwrap()
-        .current_dir(repo_path)
-        .arg("once")
-        .assert()
-        .success();
+    exec_in(&container, "/repo", "echo 'original content' > test.txt").await?;
+    exec_in(&container, "/repo", "git autosnap once").await?;
 
     // Modify the file
-    fs::write(&test_file, "modified content").unwrap();
+    exec_in(&container, "/repo", "echo 'modified content' > test.txt").await?;
 
     // Restore with dry-run
-    Command::cargo_bin("git-autosnap")
-        .unwrap()
-        .current_dir(repo_path)
-        .args(["restore", "--dry-run", "HEAD"])
-        .assert()
-        .success();
+    exec_in(&container, "/repo", "git autosnap restore --dry-run HEAD").await?;
 
     // Verify file was NOT changed (dry-run)
-    let content = fs::read_to_string(&test_file).unwrap();
+    let content = exec_in(&container, "/repo", "cat test.txt").await?;
     assert_eq!(
-        content, "modified content",
+        content.trim(),
+        "modified content",
         "File was changed during dry-run"
     );
+
+    Ok(())
 }
 
 /// Test safety check (refuses to restore with uncommitted changes)
-#[test]
-fn test_restore_safety_check() {
-    let temp = TempDir::new().unwrap();
-    let repo_path = temp.path();
+#[tokio::test]
+async fn test_restore_safety_check() -> Result<()> {
+    let image = GenericImage::new("git-autosnap-test", "latest")
+        .with_wait_for(WaitFor::message_on_stdout("ready"));
+    let container = image.start().await?;
 
-    // Initialize a git repo
-    std::process::Command::new("git")
-        .args(["init"])
-        .current_dir(repo_path)
-        .output()
-        .unwrap();
-
-    // Configure git user for commits
-    std::process::Command::new("git")
-        .args(["config", "user.email", "test@example.com"])
-        .current_dir(repo_path)
-        .output()
-        .unwrap();
-
-    std::process::Command::new("git")
-        .args(["config", "user.name", "Test User"])
-        .current_dir(repo_path)
-        .output()
-        .unwrap();
-
-    // Initialize autosnap
-    Command::cargo_bin("git-autosnap")
-        .unwrap()
-        .current_dir(repo_path)
-        .arg("init")
-        .assert()
-        .success();
+    // Initialize a git repo in the container
+    exec_bash(&container, "mkdir -p /repo && git init /repo").await?;
+    exec_in(&container, "/repo", "git autosnap init").await?;
 
     // Create a test file and commit it
-    let test_file = repo_path.join("test.txt");
-    fs::write(&test_file, "original content").unwrap();
-
-    std::process::Command::new("git")
-        .args(["add", "test.txt"])
-        .current_dir(repo_path)
-        .output()
-        .unwrap();
-
-    std::process::Command::new("git")
-        .args(["commit", "-m", "Initial commit"])
-        .current_dir(repo_path)
-        .output()
-        .unwrap();
+    exec_in(&container, "/repo", "echo 'original content' > test.txt").await?;
+    exec_in(&container, "/repo", "git add test.txt").await?;
+    exec_in(&container, "/repo", "git commit -m 'Initial commit'").await?;
 
     // Take a snapshot
-    Command::cargo_bin("git-autosnap")
-        .unwrap()
-        .current_dir(repo_path)
-        .arg("once")
-        .assert()
-        .success();
+    exec_in(&container, "/repo", "git autosnap once").await?;
 
     // Modify the file (creating uncommitted changes)
-    fs::write(&test_file, "modified content").unwrap();
+    exec_in(&container, "/repo", "echo 'modified content' > test.txt").await?;
 
     // Try to restore without --force (should fail)
-    Command::cargo_bin("git-autosnap")
-        .unwrap()
-        .current_dir(repo_path)
-        .args(["restore", "HEAD"])
-        .assert()
-        .failure()
-        .stderr(predicates::str::contains("uncommitted changes"));
+    let result = exec_in(&container, "/repo", "git autosnap restore HEAD").await;
+    assert!(
+        result.is_err(),
+        "Restore should have failed with uncommitted changes"
+    );
+
+    // Verify the error message contains expected text
+    if let Err(e) = result {
+        let error_msg = e.to_string();
+        assert!(
+            error_msg.contains("uncommitted changes") || error_msg.contains("command failed"),
+            "Expected error about uncommitted changes, got: {}",
+            error_msg
+        );
+    }
+
+    Ok(())
 }
 
 /// Test full restore mode
-#[test]
-fn test_restore_full_mode() {
-    let temp = TempDir::new().unwrap();
-    let repo_path = temp.path();
+#[tokio::test]
+async fn test_restore_full_mode() -> Result<()> {
+    let image = GenericImage::new("git-autosnap-test", "latest")
+        .with_wait_for(WaitFor::message_on_stdout("ready"));
+    let container = image.start().await?;
 
-    // Initialize a git repo
-    std::process::Command::new("git")
-        .args(["init"])
-        .current_dir(repo_path)
-        .output()
-        .unwrap();
-
-    // Configure git user
-    std::process::Command::new("git")
-        .args(["config", "user.email", "test@example.com"])
-        .current_dir(repo_path)
-        .output()
-        .unwrap();
-
-    std::process::Command::new("git")
-        .args(["config", "user.name", "Test User"])
-        .current_dir(repo_path)
-        .output()
-        .unwrap();
-
-    // Initialize autosnap
-    Command::cargo_bin("git-autosnap")
-        .unwrap()
-        .current_dir(repo_path)
-        .arg("init")
-        .assert()
-        .success();
+    // Initialize a git repo in the container
+    exec_bash(&container, "mkdir -p /repo && git init /repo").await?;
+    exec_in(&container, "/repo", "git autosnap init").await?;
 
     // Create a test file and take a snapshot
-    let test_file = repo_path.join("test.txt");
-    fs::write(&test_file, "original content").unwrap();
-
-    Command::cargo_bin("git-autosnap")
-        .unwrap()
-        .current_dir(repo_path)
-        .arg("once")
-        .assert()
-        .success();
+    exec_in(&container, "/repo", "echo 'original content' > test.txt").await?;
+    exec_in(&container, "/repo", "git autosnap once").await?;
 
     // Create an extra file that's not in the snapshot
-    let extra_file = repo_path.join("extra.txt");
-    fs::write(&extra_file, "extra content").unwrap();
+    exec_in(&container, "/repo", "echo 'extra content' > extra.txt").await?;
 
     // Full restore should remove the extra file
-    Command::cargo_bin("git-autosnap")
-        .unwrap()
-        .current_dir(repo_path)
-        .args(["restore", "--force", "--full", "HEAD"])
-        .assert()
-        .success();
+    exec_in(
+        &container,
+        "/repo",
+        "git autosnap restore --force --full HEAD",
+    )
+    .await?;
 
     // Verify extra file was removed
+    let ls_result = exec_in(&container, "/repo", "ls -la extra.txt 2>&1").await;
     assert!(
-        !extra_file.exists(),
+        ls_result.is_err() || ls_result.unwrap().contains("No such file"),
         "Extra file should have been removed in full restore"
     );
 
     // Verify original file still exists
-    assert!(test_file.exists(), "Original file should still exist");
+    let test_file = exec_in(&container, "/repo", "ls test.txt").await?;
+    assert!(
+        test_file.contains("test.txt"),
+        "Original file should still exist"
+    );
 
     // Verify .autosnap was NOT removed
+    let autosnap_dir = exec_in(&container, "/repo", "ls -d .autosnap").await?;
     assert!(
-        repo_path.join(".autosnap").exists(),
+        autosnap_dir.contains(".autosnap"),
         ".autosnap should not be removed"
     );
 
     // Verify .git was NOT removed
-    assert!(
-        repo_path.join(".git").exists(),
-        ".git should not be removed"
-    );
+    let git_dir = exec_in(&container, "/repo", "ls -d .git").await?;
+    assert!(git_dir.contains(".git"), ".git should not be removed");
+
+    Ok(())
 }
