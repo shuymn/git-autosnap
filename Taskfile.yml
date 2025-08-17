@@ -145,29 +145,31 @@ tasks:
         GIT_EXEC_PATH=$(git --exec-path)
         TARGET="$GIT_EXEC_PATH/git-autosnap"
         
+        # Atomic replacement: copy to .new first
+        cp target/release/git-autosnap "$TARGET.new"
+        
         # Check if daemon is running
         if [ -f "$TARGET" ] && "$TARGET" status >/dev/null 2>&1; then
-          echo "git-autosnap daemon is running - sending SIGUSR2 for graceful update..."
+          echo "git-autosnap daemon is running - updating with hot reload..."
           
-          # Get PID from pidfile
+          # Atomically replace the binary
+          mv "$TARGET.new" "$TARGET"
+          
+          # Signal daemon to re-exec with new binary
           PIDFILE="$PWD/.autosnap/autosnap.pid"
           if [ -f "$PIDFILE" ]; then
             PID=$(cat "$PIDFILE")
-            kill -USR2 "$PID" 2>/dev/null || true
-            echo "Sent SIGUSR2 to daemon (PID: $PID)"
-            # Give it a moment to shutdown
-            sleep 1
+            if kill -USR2 "$PID" 2>/dev/null; then
+              echo "Sent SIGUSR2 to daemon (PID: $PID)"
+              echo "Daemon will automatically restart with new binary"
+            else
+              echo "Failed to signal daemon, it may have already stopped"
+            fi
           fi
-        fi
-        
-        cp target/release/git-autosnap "$GIT_EXEC_PATH/"
-        echo "Installed to $GIT_EXEC_PATH/git-autosnap"
-        
-        # If daemon was running, remind user to restart
-        if [ -n "$PID" ]; then
-          echo ""
-          echo "Note: Daemon was stopped for update. Restart with:"
-          echo "  git autosnap start --daemon"
+        else
+          # Not running, just move the binary
+          mv "$TARGET.new" "$TARGET"
+          echo "Installed to $TARGET"
         fi
 
   uninstall:
