@@ -46,38 +46,39 @@ pub fn run(cli: cli::Cli) -> Result<()> {
             let root = gitlayer::repo_root()?;
             let cfg = config::AutosnapConfig::load(&root)?;
             if daemon {
-                warn!("start --daemon is not implemented yet");
                 daemon::start_daemon(&root, &cfg)?;
             } else {
-                warn!("start (foreground) is not implemented yet");
                 watcher::start_foreground(&root, &cfg)?;
             }
         }
         Commands::Stop => {
             let root = gitlayer::repo_root()?;
-            warn!("stop is not implemented yet");
             daemon::stop(&root)?;
         }
         Commands::Status => {
             let root = gitlayer::repo_root()?;
-            warn!("status is not implemented yet");
-            process::status(&root)?;
+            let running = process::status(&root)?;
+            if running {
+                println!("running");
+                std::process::exit(0);
+            } else {
+                println!("stopped");
+                std::process::exit(1);
+            }
         }
         Commands::Once => {
             let root = gitlayer::repo_root()?;
-            warn!("once is not implemented yet");
             gitlayer::snapshot_once(&root)?;
         }
         Commands::Gc { days } => {
             let root = gitlayer::repo_root()?;
             let mut cfg = config::AutosnapConfig::load(&root)?;
             if let Some(d) = days { cfg.prune_days = d; }
-            warn!("gc is not implemented yet");
             gitlayer::gc(&root, cfg.prune_days)?;
         }
         Commands::Uninstall => {
             let root = gitlayer::repo_root()?;
-            warn!("uninstall is not implemented yet");
+            let _ = daemon::stop(&root);
             process::uninstall(&root)?;
         }
     }

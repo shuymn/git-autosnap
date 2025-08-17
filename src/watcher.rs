@@ -1,5 +1,6 @@
 use crate::config::AutosnapConfig;
 use crate::gitlayer;
+use crate::process;
 use anyhow::{Context, Result, anyhow};
 use std::path::Path;
 use tracing::{error, info};
@@ -7,6 +8,8 @@ use tracing::{error, info};
 /// Start the foreground watcher loop using watchexec with git-aware ignores and debounce.
 pub fn start_foreground(repo_root: &Path, cfg: &AutosnapConfig) -> Result<()> {
     gitlayer::init_autosnap(repo_root).ok(); // ensure exists; ignore if already present
+    // Acquire single-instance lock and write pid
+    let _guard = process::acquire_lock(repo_root)?;
 
     // Run watchexec on a Tokio runtime to handle async APIs.
     let rt = tokio::runtime::Builder::new_multi_thread()
