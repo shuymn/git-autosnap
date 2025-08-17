@@ -1,9 +1,9 @@
+use anyhow::{Context, Result, anyhow};
+use fs2::FileExt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use anyhow::{anyhow, Context, Result};
-use fs2::FileExt;
 
 /// Path to the PID file inside `.autosnap`.
 pub fn pid_file(repo_root: &Path) -> PathBuf {
@@ -17,7 +17,7 @@ pub fn status(repo_root: &Path) -> Result<bool> {
         return Ok(false);
     }
     let pid = read_pidfile(&pid_path)?;
-    Ok(pid.map_or(false, |p| is_pid_alive(p)))
+    Ok(pid.is_some_and(is_pid_alive))
 }
 
 /// Remove `.autosnap` directory after stopping the daemon.
@@ -57,6 +57,7 @@ pub fn acquire_lock(repo_root: &Path) -> Result<PidGuard> {
 
     let file = OpenOptions::new()
         .create(true)
+        .truncate(false)
         .read(true)
         .write(true)
         .open(&pid_path)
@@ -66,7 +67,9 @@ pub fn acquire_lock(repo_root: &Path) -> Result<PidGuard> {
     if let Err(e) = file.try_lock_exclusive() {
         // Attempt to read pid to include in message
         let pid = read_pid_from_file(&file).unwrap_or(None);
-        let pid_str = pid.map(|p| p.to_string()).unwrap_or_else(|| "unknown".into());
+        let pid_str = pid
+            .map(|p| p.to_string())
+            .unwrap_or_else(|| "unknown".into());
         return Err(anyhow!("autosnap already running (pid={pid_str}): {e}"));
     }
 
@@ -80,7 +83,10 @@ pub fn acquire_lock(repo_root: &Path) -> Result<PidGuard> {
     perms.set_mode(0o600);
     fs::set_permissions(&pid_path, perms)?;
 
-    Ok(PidGuard { file, path: pid_path })
+    Ok(PidGuard {
+        file,
+        path: pid_path,
+    })
 }
 
 fn read_pid_from_file(file: &File) -> Result<Option<i32>> {
@@ -91,7 +97,8 @@ fn read_pid_from_file(file: &File) -> Result<Option<i32>> {
 }
 
 fn read_pidfile(path: &Path) -> Result<Option<i32>> {
-    let content = fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
+    let content =
+        fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
     parse_pid(&content)
 }
 
@@ -100,7 +107,9 @@ fn parse_pid(s: &str) -> Result<Option<i32>> {
     if t.is_empty() {
         return Ok(None);
     }
-    let p: i32 = t.parse().with_context(|| format!("invalid pid in pidfile: {t}"))?;
+    let p: i32 = t
+        .parse()
+        .with_context(|| format!("invalid pid in pidfile: {t}"))?;
     Ok(Some(p))
 }
 

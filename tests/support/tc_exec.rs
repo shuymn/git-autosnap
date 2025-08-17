@@ -30,7 +30,7 @@ pub async fn exec_bash<I: Image>(c: &ContainerAsync<I>, cmd: &str) -> Result<Str
         bail!("command failed (code {:?}): {}", exit_code, stderr_str);
     }
 
-    Ok(String::from_utf8(stdout).context("invalid utf8 on stdout")?)
+    String::from_utf8(stdout).context("invalid utf8 on stdout")
 }
 
 /// Execute a command in a specific directory
