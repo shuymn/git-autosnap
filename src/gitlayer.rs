@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
-use git2::{Commit, IndexAddOption, Oid, Repository, Signature, Tree};
+use git2::{Commit, IndexAddOption, Repository, Signature, Tree};
+use std::process::Command;
 
 /// Discover the current repository root directory.
 pub fn repo_root() -> Result<PathBuf> {
@@ -64,7 +65,7 @@ pub fn snapshot_once(repo_root: &Path) -> Result<()> {
 
     // Commit message
     let branch = current_branch_name(repo_root).unwrap_or_else(|| "DETACHED".to_string());
-    let ts = unix_timestamp_iso8601_like();
+    let ts = iso8601_now_with_offset();
     let msg = format!("AUTOSNAP[{branch}] {ts}");
 
     // Determine parents (if any)
@@ -90,8 +91,39 @@ pub fn snapshot_once(repo_root: &Path) -> Result<()> {
 
 /// Garbage collect (prune) snapshots older than the given number of days.
 /// Not implemented yet.
-pub fn gc(_repo_root: &Path, _prune_days: u32) -> Result<()> {
-    // Placeholder: Will be implemented using libgit2 or delegated to `git` CLI.
+pub fn gc(repo_root: &Path, prune_days: u32) -> Result<()> {
+    let autosnap = autosnap_dir(repo_root);
+    if !autosnap.exists() {
+        return Ok(()); // nothing to do
+    }
+
+    let gitdir = autosnap.to_string_lossy().to_string();
+    let expire = format!("{}.days.ago", prune_days);
+
+    let status = Command::new("git")
+        .args([
+            "--git-dir",
+            &gitdir,
+            "reflog",
+            "expire",
+            "--expire",
+            &expire,
+            "--all",
+        ])
+        .status()
+        .context("failed to run git reflog expire")?;
+    if !status.success() {
+        return Err(anyhow::anyhow!("git reflog expire exited with status {status}"));
+    }
+
+    let status = Command::new("git")
+        .args(["--git-dir", &gitdir, "gc", "--prune", &expire])
+        .status()
+        .context("failed to run git gc")?;
+    if !status.success() {
+        return Err(anyhow::anyhow!("git gc exited with status {status}"));
+    }
+
     Ok(())
 }
 
@@ -128,13 +160,8 @@ fn current_branch_name(repo_root: &Path) -> Option<String> {
     }
 }
 
-fn unix_timestamp_iso8601_like() -> String {
-    // Without external time crates, use a simple UTC-like format "YYYY-MM-DDTHH:MM:SSZ" if possible,
-    // otherwise fall back to epoch seconds. We'll approximate using libc gmtime if available in std.
-    // For portability within current dependencies, emit epoch seconds.
-    use std::time::{SystemTime, UNIX_EPOCH};
-    match SystemTime::now().duration_since(UNIX_EPOCH) {
-        Ok(dur) => format!("{}", dur.as_secs()),
-        Err(_) => "0".to_string(),
-    }
+fn iso8601_now_with_offset() -> String {
+    use time::{format_description::well_known::Rfc3339, OffsetDateTime};
+    let now = OffsetDateTime::now_local().unwrap_or_else(|_| OffsetDateTime::now_utc());
+    now.format(&Rfc3339).unwrap_or_else(|_| now.to_string())
 }
