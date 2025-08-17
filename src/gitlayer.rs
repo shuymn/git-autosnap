@@ -120,7 +120,8 @@ pub fn gc(repo_root: &Path, prune_days: u32) -> Result<()> {
     }
 
     let gitdir = autosnap.to_string_lossy().to_string();
-    let expire = format!("{}.days.ago", prune_days);
+    // Use Git's duration syntax like "60d" for 60 days
+    let expire = format!("{}d", prune_days);
 
     let status = Command::new("git")
         .args([
