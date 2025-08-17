@@ -143,8 +143,32 @@ tasks:
     cmds:
       - |
         GIT_EXEC_PATH=$(git --exec-path)
+        TARGET="$GIT_EXEC_PATH/git-autosnap"
+        
+        # Check if daemon is running
+        if [ -f "$TARGET" ] && "$TARGET" status >/dev/null 2>&1; then
+          echo "git-autosnap daemon is running - sending SIGUSR2 for graceful update..."
+          
+          # Get PID from pidfile
+          PIDFILE="$PWD/.autosnap/autosnap.pid"
+          if [ -f "$PIDFILE" ]; then
+            PID=$(cat "$PIDFILE")
+            kill -USR2 "$PID" 2>/dev/null || true
+            echo "Sent SIGUSR2 to daemon (PID: $PID)"
+            # Give it a moment to shutdown
+            sleep 1
+          fi
+        fi
+        
         cp target/release/git-autosnap "$GIT_EXEC_PATH/"
         echo "Installed to $GIT_EXEC_PATH/git-autosnap"
+        
+        # If daemon was running, remind user to restart
+        if [ -n "$PID" ]; then
+          echo ""
+          echo "Note: Daemon was stopped for update. Restart with:"
+          echo "  git autosnap start --daemon"
+        fi
 
   uninstall:
     desc: Uninstall git-autosnap from system
