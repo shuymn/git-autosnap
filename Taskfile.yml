@@ -1,0 +1,233 @@
+# Taskfile for git-autosnap project
+# https://taskfile.dev
+
+version: "3"
+
+vars:
+  DOCKER_IMAGE: git-autosnap-test:latest
+  CARGO_FLAGS: --all-features
+  RUST_LOG: '{{.RUST_LOG | default "info"}}'
+
+env:
+  RUST_LOG: "{{.RUST_LOG}}"
+
+tasks:
+  # Default task - shows help
+  default:
+    desc: Show available tasks
+    cmds:
+      - task --list-all
+    silent: true
+
+  # ============================================================================
+  # Build Tasks
+  # ============================================================================
+
+  build:
+    desc: Build the project in debug mode
+    cmds:
+      - cargo build {{.CARGO_FLAGS}}
+    sources:
+      - src/**/*.rs
+      - Cargo.toml
+      - Cargo.lock
+    generates:
+      - target/debug/git-autosnap
+
+  build-release:
+    desc: Build the project in release mode
+    cmds:
+      - cargo build --release {{.CARGO_FLAGS}}
+    sources:
+      - src/**/*.rs
+      - Cargo.toml
+      - Cargo.lock
+    generates:
+      - target/release/git-autosnap
+
+  docker-build-test:
+    desc: Build the Docker test image
+    cmds:
+      - docker build -f Dockerfile.test -t {{.DOCKER_IMAGE}} .
+    sources:
+      - Dockerfile.test
+      - src/**/*.rs
+      - Cargo.toml
+      - Cargo.lock
+    status:
+      - docker image inspect {{.DOCKER_IMAGE}} > /dev/null 2>&1
+
+  # ============================================================================
+  # Test Tasks
+  # ============================================================================
+
+  test:
+    desc: Run all tests (unit and container)
+    deps:
+      - test-unit
+      - test-container
+
+  test-unit:
+    desc: Run unit tests
+    cmds:
+      - cargo nextest run --cargo-quiet --lib --bins
+
+  test-container:
+    desc: Run container-based integration tests
+    deps:
+      - docker-build-test
+    preconditions:
+      - sh: docker info > /dev/null 2>&1
+        msg: Docker daemon is not running
+    cmds:
+      - cargo nextest run --cargo-quiet --features container-tests
+
+  test-all:
+    desc: Run all tests with all features
+    deps:
+      - docker-build-test
+    cmds:
+      - cargo nextest run --cargo-quiet {{.CARGO_FLAGS}}
+
+  # ============================================================================
+  # Lint and Format Tasks
+  # ============================================================================
+
+  fmt:
+    desc: Format code with cargo fmt
+    cmds:
+      - cargo fmt --all
+
+  fmt-check:
+    desc: Check code formatting
+    cmds:
+      - cargo fmt --all --check
+
+  clippy:
+    desc: Run clippy linter
+    cmds:
+      - cargo clippy {{.CARGO_FLAGS}} -- -D warnings
+
+  lint:
+    desc: Run all linters and formatters
+    cmds:
+      - task: fmt-check
+      - task: clippy
+
+  # ============================================================================
+  # Development Tasks
+  # ============================================================================
+
+  watch:
+    desc: Watch for changes and rebuild
+    cmds:
+      - cargo watch -x build
+
+  run:
+    desc: Run the binary with arguments
+    vars:
+      ARGS: '{{.CLI_ARGS | default "--help"}}'
+    cmds:
+      - cargo run -- {{.ARGS}}
+
+  clean:
+    desc: Clean build artifacts
+    cmds:
+      - cargo clean
+      - rm -rf .task
+
+  install:
+    desc: Install git-autosnap to system
+    deps:
+      - build-release
+    cmds:
+      - |
+        GIT_EXEC_PATH=$(git --exec-path)
+        cp target/release/git-autosnap "$GIT_EXEC_PATH/"
+        echo "Installed to $GIT_EXEC_PATH/git-autosnap"
+
+  uninstall:
+    desc: Uninstall git-autosnap from system
+    cmds:
+      - |
+        GIT_EXEC_PATH=$(git --exec-path)
+        rm -f "$GIT_EXEC_PATH/git-autosnap"
+        echo "Removed from $GIT_EXEC_PATH/git-autosnap"
+
+  # ============================================================================
+  # Documentation Tasks
+  # ============================================================================
+
+  docs:
+    desc: Generate documentation
+    cmds:
+      - cargo doc --no-deps --open
+
+  docs-all:
+    desc: Generate documentation with dependencies
+    cmds:
+      - cargo doc --open
+
+  # ============================================================================
+  # Docker Management Tasks
+  # ============================================================================
+
+  docker-clean:
+    desc: Remove the test Docker image
+    cmds:
+      - docker rmi {{.DOCKER_IMAGE}} || true
+
+  docker-rebuild:
+    desc: Force rebuild the test Docker image
+    deps:
+      - docker-clean
+    cmds:
+      - task: docker-build-test
+
+  docker-shell:
+    desc: Start an interactive shell in the test container
+    deps:
+      - docker-build-test
+    cmds:
+      - docker run --rm -it {{.DOCKER_IMAGE}} bash
+
+  # ============================================================================
+  # Utility Tasks
+  # ============================================================================
+
+  deps:
+    desc: Install development dependencies
+    cmds:
+      - cargo install cargo-watch
+      - cargo install cargo-expand
+      - cargo install cargo-nextest
+      - echo "Development dependencies installed"
+
+  update:
+    desc: Update Cargo dependencies
+    cmds:
+      - cargo update
+      - cargo outdated
+
+  coverage:
+    desc: Generate test coverage report
+    cmds:
+      - cargo tarpaulin --out Html --output-dir target/coverage
+
+  bench:
+    desc: Run benchmarks
+    cmds:
+      - cargo bench
+
+  version:
+    silent: true
+    desc: Show version information
+    cmds:
+      - echo "git-autosnap version:"
+      - cargo pkgid | cut -d# -f2
+      - echo ""
+      - echo "Rust version:"
+      - rustc --version
+      - echo ""
+      - echo "Cargo version:"
+      - cargo --version
