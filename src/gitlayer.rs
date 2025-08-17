@@ -92,9 +92,16 @@ pub fn snapshot_once(repo_root: &Path) -> Result<()> {
 
     let parent_refs: Vec<&Commit> = parents.iter().collect();
 
-    let _commit = repo
+    let oid = repo
         .commit(Some("HEAD"), &sig, &sig, &msg, &tree, &parent_refs)
         .context("failed to create autosnap commit")?;
+
+    // Print short id for script-friendliness per implementation plan
+    if let Ok(short) = repo.find_object(oid, None).and_then(|o| o.short_id()) {
+        if let Some(s) = short.as_str() {
+            println!("{}", s);
+        }
+    }
 
     Ok(())
 }
