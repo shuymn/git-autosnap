@@ -1,6 +1,6 @@
-use std::path::{Path, PathBuf};
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use git2::{Commit, IndexAddOption, Repository, Signature, Tree};
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Discover the current repository root directory.
@@ -43,14 +43,21 @@ pub fn snapshot_once(repo_root: &Path) -> Result<()> {
         .with_context(|| format!("failed to set workdir to {}", repo_root.display()))?;
 
     // Build index from the working directory, respecting .gitignore (libgit2)
-    let mut index = repo.index().context("failed to open index for autosnap repo")?;
-    index.add_all(["*"], IndexAddOption::DEFAULT, None)
+    let mut index = repo
+        .index()
+        .context("failed to open index for autosnap repo")?;
+    index
+        .add_all(["*"], IndexAddOption::DEFAULT, None)
         .context("index add_all failed")?;
     // Best-effort remove .autosnap and .git if they got picked up
     let _ = index.remove_all([".autosnap", ".git"], None);
     index.write().context("failed to write index")?;
-    let tree_id = index.write_tree().context("failed to write tree from index")?;
-    let tree = repo.find_tree(tree_id).context("failed to find written tree")?;
+    let tree_id = index
+        .write_tree()
+        .context("failed to write tree from index")?;
+    let tree = repo
+        .find_tree(tree_id)
+        .context("failed to find written tree")?;
 
     // Check if identical to HEAD to avoid duplicate commits
     if let Some(prev_tree) = head_tree(&repo)? {
@@ -72,7 +79,10 @@ pub fn snapshot_once(repo_root: &Path) -> Result<()> {
     let parents: Vec<Commit> = match repo.head() {
         Ok(head) => {
             if let Some(oid) = head.target() {
-                vec![repo.find_commit(oid).context("failed to peel HEAD to commit")?]
+                vec![
+                    repo.find_commit(oid)
+                        .context("failed to peel HEAD to commit")?,
+                ]
             } else {
                 Vec::new()
             }
@@ -90,7 +100,12 @@ pub fn snapshot_once(repo_root: &Path) -> Result<()> {
 }
 
 /// Garbage collect (prune) snapshots older than the given number of days.
-/// Not implemented yet.
+/// 
+/// Uses git command directly instead of libgit2 because libgit2 doesn't provide
+/// APIs for reflog expiration or garbage collection. These are considered
+/// "policy-based" housekeeping operations that libgit2 intentionally omits,
+/// requiring applications to either implement custom logic using low-level
+/// primitives or shell out to git (which is the standard practice).
 pub fn gc(repo_root: &Path, prune_days: u32) -> Result<()> {
     let autosnap = autosnap_dir(repo_root);
     if !autosnap.exists() {
@@ -102,22 +117,26 @@ pub fn gc(repo_root: &Path, prune_days: u32) -> Result<()> {
 
     let status = Command::new("git")
         .args([
-            "--git-dir",
-            &gitdir,
+            format!("--git-dir={}", gitdir).as_str(),
             "reflog",
             "expire",
-            "--expire",
-            &expire,
+            format!("--expire={}", expire).as_str(),
             "--all",
         ])
         .status()
         .context("failed to run git reflog expire")?;
     if !status.success() {
-        return Err(anyhow::anyhow!("git reflog expire exited with status {status}"));
+        return Err(anyhow::anyhow!(
+            "git reflog expire exited with status {status}"
+        ));
     }
 
     let status = Command::new("git")
-        .args(["--git-dir", &gitdir, "gc", "--prune", &expire])
+        .args([
+            format!("--git-dir={}", gitdir).as_str(),
+            "gc",
+            format!("--prune={}", expire).as_str(),
+        ])
         .status()
         .context("failed to run git gc")?;
     if !status.success() {
@@ -127,7 +146,7 @@ pub fn gc(repo_root: &Path, prune_days: u32) -> Result<()> {
     Ok(())
 }
 
-fn head_tree(repo: &Repository) -> Result<Option<Tree>> {
+fn head_tree(repo: &Repository) -> Result<Option<Tree<'_>>> {
     match repo.head() {
         Ok(head) => {
             if let Some(oid) = head.target() {
@@ -144,8 +163,12 @@ fn head_tree(repo: &Repository) -> Result<Option<Tree>> {
 fn signature_from_main(repo_root: &Path) -> Result<Signature<'static>> {
     let main_repo = Repository::discover(repo_root)?;
     let cfg = main_repo.config()?;
-    let name = cfg.get_string("user.name").unwrap_or_else(|_| "git-autosnap".to_string());
-    let email = cfg.get_string("user.email").unwrap_or_else(|_| "git-autosnap@local".to_string());
+    let name = cfg
+        .get_string("user.name")
+        .unwrap_or_else(|_| "git-autosnap".to_string());
+    let email = cfg
+        .get_string("user.email")
+        .unwrap_or_else(|_| "git-autosnap@local".to_string());
     let sig = Signature::now(&name, &email).context("failed to create signature")?;
     Ok(sig)
 }
@@ -161,7 +184,7 @@ fn current_branch_name(repo_root: &Path) -> Option<String> {
 }
 
 fn iso8601_now_with_offset() -> String {
-    use time::{format_description::well_known::Rfc3339, OffsetDateTime};
+    use time::{OffsetDateTime, format_description::well_known::Rfc3339};
     let now = OffsetDateTime::now_local().unwrap_or_else(|_| OffsetDateTime::now_utc());
     now.format(&Rfc3339).unwrap_or_else(|_| now.to_string())
 }
