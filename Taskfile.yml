@@ -5,7 +5,7 @@ version: "3"
 
 vars:
   DOCKER_IMAGE: git-autosnap-test:latest
-  CARGO_FLAGS: --all-features
+  CARGO_FLAGS: --all-features --all-targets
   RUST_LOG: '{{.RUST_LOG | default "info"}}'
 
 env:
@@ -144,17 +144,17 @@ tasks:
       - |
         GIT_EXEC_PATH=$(git --exec-path)
         TARGET="$GIT_EXEC_PATH/git-autosnap"
-        
+
         # Atomic replacement: copy to .new first
         cp target/release/git-autosnap "$TARGET.new"
-        
+
         # Check if daemon is running
         if [ -f "$TARGET" ] && "$TARGET" status >/dev/null 2>&1; then
           echo "git-autosnap daemon is running - updating with hot reload..."
-          
+
           # Atomically replace the binary
           mv "$TARGET.new" "$TARGET"
-          
+
           # Signal daemon to re-exec with new binary
           PIDFILE="$PWD/.autosnap/autosnap.pid"
           if [ -f "$PIDFILE" ]; then
