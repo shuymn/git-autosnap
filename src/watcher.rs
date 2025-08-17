@@ -44,16 +44,61 @@ pub fn start_foreground(repo_root: &Path, cfg: &AutosnapConfig) -> Result<()> {
         // Handler: trigger snapshot on any coalesced (throttled) event batch
         let root_for_handler = repo_root.clone();
         let wx = Watchexec::new(move |mut action| {
-            // Quit on interrupt/terminate
-            if action.signals().next().is_some() {
-                // Flush a final snapshot before quitting
-                if let Err(e) = gitlayer::snapshot_once(&root_for_handler) {
-                    error!(error = ?e, "final snapshot failed");
-                } else {
-                    info!("final snapshot created");
+            // Handle signals - collect them first to avoid borrowing issues
+            let signals: Vec<_> = action.signals().collect();
+            for signal in signals {
+                use watchexec_signals::Signal;
+                match signal {
+                    // SIGTERM, SIGINT: Graceful shutdown with final snapshot
+                    Signal::Terminate | Signal::Interrupt => {
+                        info!("received shutdown signal");
+                        if let Err(e) = gitlayer::snapshot_once(&root_for_handler) {
+                            error!(error = ?e, "final snapshot failed");
+                        } else {
+                            info!("final snapshot created");
+                        }
+                        action.quit();
+                        return action;
+                    }
+                    // SIGHUP: Reload (for future config reload implementation)
+                    Signal::Hangup => {
+                        info!("received SIGHUP - reload signal (not yet implemented)");
+                        // TODO: Reload configuration
+                    }
+                    // SIGUSR1: Force immediate snapshot
+                    Signal::User1 => {
+                        info!("received SIGUSR1 - forcing snapshot");
+                        let root = root_for_handler.clone();
+                        std::thread::spawn(move || {
+                            if let Err(e) = gitlayer::snapshot_once(&root) {
+                                error!(error = ?e, "forced snapshot failed");
+                            } else {
+                                info!("forced snapshot created");
+                            }
+                        });
+                    }
+                    // SIGUSR2: Prepare for binary replacement (exec new binary)
+                    Signal::User2 => {
+                        info!("received SIGUSR2 - preparing for binary update");
+                        if let Err(e) = gitlayer::snapshot_once(&root_for_handler) {
+                            error!(error = ?e, "pre-update snapshot failed");
+                        } else {
+                            info!("pre-update snapshot created");
+                        }
+                        // Re-exec ourselves to pick up new binary
+                        let exe = std::env::current_exe().unwrap_or_default();
+                        let _args: Vec<String> = std::env::args().collect();
+                        info!("re-executing with new binary: {:?}", exe);
+
+                        // Note: This would need proper exec implementation
+                        // For now, just quit and rely on systemd/supervisor to restart
+                        action.quit();
+                        return action;
+                    }
+                    _ => {
+                        // Ignore other signals
+                    }
                 }
-                action.quit();
-                return action;
             }
 
             // Snapshot on any events with paths
