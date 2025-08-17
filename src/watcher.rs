@@ -93,6 +93,10 @@ pub fn start_foreground(repo_root: &Path, cfg: &AutosnapConfig) -> Result<()> {
         let root_for_handler = repo_root.clone();
         let ignore_files_for_handler = tracked_ignore_files.clone();
         let (binary_update_tx, binary_update_rx) = std::sync::mpsc::channel::<bool>();
+        // Track whether a binary update (SIGUSR2) was requested; only then wait for update window
+        let binary_update_requested =
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let binary_update_requested_for_handler = binary_update_requested.clone();
 
         let wx = Watchexec::new(move |mut action| {
             // Check if any changed path is an ignore file we're tracking
@@ -159,6 +163,9 @@ pub fn start_foreground(repo_root: &Path, cfg: &AutosnapConfig) -> Result<()> {
                         }
 
                         // Phase 2: Start polling for binary change
+                        // Mark that we should wait for an update window on shutdown
+                        binary_update_requested_for_handler
+                            .store(true, std::sync::atomic::Ordering::SeqCst);
                         let exe_path = match std::env::current_exe() {
                             Ok(p) => p,
                             Err(e) => {
@@ -257,8 +264,11 @@ pub fn start_foreground(repo_root: &Path, cfg: &AutosnapConfig) -> Result<()> {
             Err(e) => Err(anyhow!("watchexec task join error: {e}")),
         };
 
-        // Check if we have a pending binary update
-        if let Ok(should_exec) = binary_update_rx.recv_timeout(std::time::Duration::from_secs(16)) {
+        // Only wait for binary update window if SIGUSR2 was received
+        if binary_update_requested.load(std::sync::atomic::Ordering::SeqCst)
+            && let Ok(should_exec) =
+                binary_update_rx.recv_timeout(std::time::Duration::from_secs(16))
+        {
             if should_exec {
                 info!("binary update detected, performing exec");
                 perform_exec();
