@@ -96,7 +96,7 @@ fn add_to_git_exclude(repo_root: &Path) -> Result<()> {
 }
 
 /// Take a single snapshot of the working tree and commit it into `.autosnap`.
-pub fn snapshot_once(repo_root: &Path) -> Result<()> {
+pub fn snapshot_once(repo_root: &Path, message: Option<&str>) -> Result<()> {
     let autosnap = autosnap_dir(repo_root);
     if !autosnap.exists() {
         bail!(".autosnap is missing; run `git autosnap init` first")
@@ -140,7 +140,11 @@ pub fn snapshot_once(repo_root: &Path) -> Result<()> {
     // Commit message
     let branch = current_branch_name(repo_root).unwrap_or_else(|| "DETACHED".to_string());
     let ts = iso8601_now_with_offset();
-    let msg = format!("AUTOSNAP[{branch}] {ts}");
+    let msg = if let Some(custom_msg) = message {
+        format!("AUTOSNAP[{branch}] {ts}: {custom_msg}")
+    } else {
+        format!("AUTOSNAP[{branch}] {ts}")
+    };
 
     // Determine parents (if any)
     let parents: Vec<Commit> = match repo.head() {

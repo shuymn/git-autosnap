@@ -31,7 +31,11 @@ pub enum Commands {
     Status,
 
     /// Take one snapshot and exit
-    Once,
+    Once {
+        /// Optional message to include in the snapshot commit
+        #[arg(value_name = "MESSAGE")]
+        message: Option<String>,
+    },
 
     /// Garbage collect (compress) snapshots, optionally pruning old ones
     Gc {

@@ -65,9 +65,9 @@ pub fn run(cli: cli::Cli) -> Result<()> {
                 std::process::exit(1);
             }
         }
-        Commands::Once => {
+        Commands::Once { message } => {
             let root = gitlayer::repo_root()?;
-            gitlayer::snapshot_once(&root)?;
+            gitlayer::snapshot_once(&root, message.as_deref())?;
         }
         Commands::Gc { days, prune } => {
             let root = gitlayer::repo_root()?;

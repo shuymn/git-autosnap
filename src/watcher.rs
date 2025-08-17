@@ -102,7 +102,7 @@ pub fn start_foreground(repo_root: &Path, cfg: &AutosnapConfig) -> Result<()> {
                     info!("detected change to tracked ignore file: {}", path.display());
 
                     // Final snapshot before restart
-                    if let Err(e) = gitlayer::snapshot_once(&root_for_handler) {
+                    if let Err(e) = gitlayer::snapshot_once(&root_for_handler, None) {
                         error!(error = ?e, "pre-restart snapshot failed");
                     }
 
@@ -122,7 +122,7 @@ pub fn start_foreground(repo_root: &Path, cfg: &AutosnapConfig) -> Result<()> {
                     // SIGTERM, SIGINT: Graceful shutdown with final snapshot
                     Signal::Terminate | Signal::Interrupt => {
                         info!("received shutdown signal");
-                        if let Err(e) = gitlayer::snapshot_once(&root_for_handler) {
+                        if let Err(e) = gitlayer::snapshot_once(&root_for_handler, None) {
                             error!(error = ?e, "final snapshot failed");
                         } else {
                             info!("final snapshot created");
@@ -140,7 +140,7 @@ pub fn start_foreground(repo_root: &Path, cfg: &AutosnapConfig) -> Result<()> {
                         info!("received SIGUSR1 - forcing snapshot");
                         let root = root_for_handler.clone();
                         std::thread::spawn(move || {
-                            if let Err(e) = gitlayer::snapshot_once(&root) {
+                            if let Err(e) = gitlayer::snapshot_once(&root, None) {
                                 error!(error = ?e, "forced snapshot failed");
                             } else {
                                 info!("forced snapshot created");
@@ -152,7 +152,7 @@ pub fn start_foreground(repo_root: &Path, cfg: &AutosnapConfig) -> Result<()> {
                         info!("received SIGUSR2 - preparing for binary update");
 
                         // Phase 1: Final snapshot
-                        if let Err(e) = gitlayer::snapshot_once(&root_for_handler) {
+                        if let Err(e) = gitlayer::snapshot_once(&root_for_handler, None) {
                             error!(error = ?e, "pre-update snapshot failed");
                         } else {
                             info!("pre-update snapshot created");
@@ -229,7 +229,7 @@ pub fn start_foreground(repo_root: &Path, cfg: &AutosnapConfig) -> Result<()> {
             if !paths.is_empty() {
                 let root = root_for_handler.clone();
                 std::thread::spawn(move || {
-                    if let Err(e) = gitlayer::snapshot_once(&root) {
+                    if let Err(e) = gitlayer::snapshot_once(&root, None) {
                         error!(error = ?e, "snapshot failed");
                     } else {
                         info!("snapshot created");
