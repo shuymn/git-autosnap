@@ -883,7 +883,6 @@ dependencies = [
  "git2",
  "ignore-files",
  "libc",
- "miette",
  "predicates",
  "shell-escape",
  "tempfile",
@@ -893,9 +892,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "watchexec",
- "watchexec-events",
  "watchexec-filterer-ignore",
- "watchexec-signals",
 ]
 
 [[package]]
