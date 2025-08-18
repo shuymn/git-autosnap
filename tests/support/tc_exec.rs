@@ -38,3 +38,29 @@ pub async fn exec_in<I: Image>(c: &ContainerAsync<I>, cwd: &str, cmd: &str) -> R
     let script = format!("cd {} && {}", escape(cwd.into()), cmd);
     exec_bash(c, &script).await
 }
+
+/// Execute a command in a specific directory allowing failures
+/// Returns stderr content on failure instead of bailing
+#[allow(dead_code)]
+pub async fn exec_in_allow_fail<I: Image>(
+    c: &ContainerAsync<I>,
+    cwd: &str,
+    cmd: &str,
+) -> Result<String> {
+    let script = format!("cd {} && {}", escape(cwd.into()), cmd);
+    let exec_cmd = ExecCommand::new(["bash", "-lc", &script]);
+    let mut result = c.exec(exec_cmd).await.context("container exec failed")?;
+
+    // Read stdout and stderr
+    let stdout = result.stdout_to_vec().await?;
+    let stderr = result.stderr_to_vec().await?;
+
+    // Check exit code
+    let exit_code = result.exit_code().await?;
+    if exit_code != Some(0) {
+        // Return stderr on failure
+        return Ok(String::from_utf8_lossy(&stderr).to_string());
+    }
+
+    String::from_utf8(stdout).context("invalid utf8 on stdout")
+}
