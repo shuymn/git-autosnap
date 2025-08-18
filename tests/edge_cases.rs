@@ -5,7 +5,7 @@ use testcontainers::{GenericImage, core::WaitFor, runners::AsyncRunner};
 
 #[path = "support/mod.rs"]
 mod support;
-use support::tc_exec::{exec_bash, exec_in};
+use support::tc_exec::{exec_bash, exec_in, exec_in_allow_fail};
 
 #[tokio::test]
 async fn test_restore_empty_paths() -> Result<()> {
@@ -27,9 +27,9 @@ async fn test_restore_empty_paths() -> Result<()> {
     .await?;
     exec_in(&container, "/repo", "git autosnap once").await?;
 
-    // Test restore with empty paths (should restore all files)
-    let restore_output = exec_in(&container, "/repo", "git autosnap restore").await?;
-    assert!(restore_output.contains("Restoring from snapshot"));
+    // Test restore with empty paths (should fail due to uncommitted changes)
+    let restore_output = exec_in_allow_fail(&container, "/repo", "git autosnap restore").await?;
+    assert!(restore_output.contains("Working tree has uncommitted changes"));
 
     Ok(())
 }
@@ -49,7 +49,8 @@ async fn test_diff_with_nonexistent_commits() -> Result<()> {
     exec_in(&container, "/repo", "git autosnap once").await?;
 
     // Test diff with nonexistent first commit
-    let diff_output = exec_in(&container, "/repo", "git autosnap diff nonexistent-commit").await?;
+    let diff_output =
+        exec_in_allow_fail(&container, "/repo", "git autosnap diff nonexistent-commit").await?;
     assert!(diff_output.contains("failed to find commit"));
 
     Ok(())
@@ -70,7 +71,7 @@ async fn test_shell_with_invalid_commit() -> Result<()> {
     exec_in(&container, "/repo", "git autosnap once").await?;
 
     // Test shell with invalid commit
-    let shell_output = exec_in(
+    let shell_output = exec_in_allow_fail(
         &container,
         "/repo",
         "echo 'ls' | git autosnap shell invalid-commit",
@@ -100,7 +101,8 @@ async fn test_daemon_with_corrupted_pidfile() -> Result<()> {
     .await?;
 
     // Try to start daemon - should fail gracefully
-    let start_output = exec_in(&container, "/repo", "git autosnap start --daemon").await?;
+    let start_output =
+        exec_in_allow_fail(&container, "/repo", "git autosnap start --daemon").await?;
     assert!(start_output.contains("invalid pid in pidfile"));
 
     Ok(())

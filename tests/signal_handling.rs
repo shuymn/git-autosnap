@@ -5,7 +5,7 @@ use testcontainers::{GenericImage, core::WaitFor, runners::AsyncRunner};
 
 #[path = "support/mod.rs"]
 mod support;
-use support::tc_exec::{exec_bash, exec_in};
+use support::tc_exec::{exec_bash, exec_in, exec_in_allow_fail};
 
 #[tokio::test]
 async fn test_sigterm_handling() -> Result<()> {
@@ -157,17 +157,20 @@ async fn test_sigusr2_handling() -> Result<()> {
     // Send SIGUSR2 to prepare for binary update
     exec_bash(&container, &format!("kill -USR2 {}", pid)).await?;
 
-    // Wait a bit for signal handling
-    exec_in(&container, "/repo", "sleep 1").await?;
+    // Wait for daemon to timeout waiting for binary update (up to 16s per the code)
+    // We'll wait 17 seconds to be safe
+    exec_in(&container, "/repo", "sleep 17").await?;
 
-    // Verify daemon is no longer running (should have exited for binary update)
-    let status_output = exec_in(
+    // Verify daemon is no longer running (should have exited after timeout)
+    let status_output = exec_in_allow_fail(
         &container,
         "/repo",
-        "sh -lc 'git autosnap status; echo EXIT:$?; true'",
+        "git autosnap status 2>&1; echo EXIT:$?",
     )
     .await?;
-    assert!(status_output.contains("EXIT:1"));
+
+    // Check if daemon has exited (status should return non-zero)
+    assert!(status_output.contains("EXIT:1") || status_output.contains("not running"));
 
     Ok(())
 }

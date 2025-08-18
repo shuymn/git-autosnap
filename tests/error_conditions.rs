@@ -5,7 +5,7 @@ use testcontainers::{GenericImage, core::WaitFor, runners::AsyncRunner};
 
 #[path = "support/mod.rs"]
 mod support;
-use support::tc_exec::{exec_bash, exec_in};
+use support::tc_exec::{exec_bash, exec_in, exec_in_allow_fail};
 
 #[tokio::test]
 async fn test_restore_with_uncommitted_changes() -> Result<()> {
@@ -45,7 +45,7 @@ async fn test_restore_with_uncommitted_changes() -> Result<()> {
     .await?;
 
     // Try to restore without --force flag
-    let restore_output = exec_in(&container, "/repo", "git autosnap restore").await?;
+    let restore_output = exec_in_allow_fail(&container, "/repo", "git autosnap restore").await?;
     assert!(restore_output.contains("Working tree has uncommitted changes"));
 
     Ok(())
@@ -64,7 +64,7 @@ async fn test_diff_without_autosnap() -> Result<()> {
     exec_in(&container, "/repo", "echo 'test content' > test.txt").await?;
 
     // Try to run diff without autosnap initialized
-    let diff_output = exec_in(&container, "/repo", "git autosnap diff").await?;
+    let diff_output = exec_in_allow_fail(&container, "/repo", "git autosnap diff").await?;
     assert!(diff_output.contains("failed to open .autosnap repository"));
 
     Ok(())
@@ -80,7 +80,7 @@ async fn test_shell_without_autosnap() -> Result<()> {
     exec_bash(&container, "mkdir -p /repo && git init /repo").await?;
 
     // Try to run shell without autosnap initialized
-    let shell_output = exec_in(&container, "/repo", "git autosnap shell").await?;
+    let shell_output = exec_in_allow_fail(&container, "/repo", "git autosnap shell").await?;
     assert!(shell_output.contains(".autosnap is missing"));
 
     Ok(())
@@ -97,7 +97,7 @@ async fn test_restore_nonexistent_commit() -> Result<()> {
     exec_in(&container, "/repo", "git autosnap init").await?;
 
     // Try to restore from a nonexistent commit
-    let restore_output = exec_in(
+    let restore_output = exec_in_allow_fail(
         &container,
         "/repo",
         "git autosnap restore nonexistent-commit",
@@ -119,7 +119,7 @@ async fn test_diff_nonexistent_commits() -> Result<()> {
     exec_in(&container, "/repo", "git autosnap init").await?;
 
     // Try to diff between nonexistent commits
-    let diff_output = exec_in(
+    let diff_output = exec_in_allow_fail(
         &container,
         "/repo",
         "git autosnap diff nonexistent-commit1 nonexistent-commit2",

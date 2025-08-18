@@ -76,6 +76,7 @@ async fn test_shell_with_commit() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore = "Interactive tests require TTY which is not available in container environment"]
 async fn test_shell_interactive() -> Result<()> {
     let image = GenericImage::new("git-autosnap-test", "latest")
         .with_wait_for(WaitFor::message_on_stdout("ready"));
