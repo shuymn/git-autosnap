@@ -113,7 +113,7 @@ pub fn snapshot_once(repo_root: &Path, message: Option<&str>) -> Result<()> {
 
     // Build index from the working directory, respecting .gitignore (libgit2)
     // with retries to tolerate transient file modifications during read.
-    let tree_id = write_tree_with_retries(&repo, repo_root, 5, 50)
+    let tree_id = write_tree_with_retries(&repo, 5, 50)
         .context("failed to write tree from index (after retries)")?;
     let tree = repo
         .find_tree(tree_id)
@@ -181,32 +181,157 @@ fn is_transient_fs_change(err: &git2::Error) -> bool {
             .contains("file changed before we could read it")
 }
 
-// Try to build the index and write out the tree once.
-// Returns the new tree id or the underlying git2 error.
-fn try_write_tree(repo: &Repository, repo_root: &Path) -> std::result::Result<Oid, git2::Error> {
-    // Use the helper function to build the tree
-    match build_working_tree_from_status(repo, repo_root) {
-        Ok(tree) => Ok(tree.id()),
-        Err(e) => {
-            // Convert anyhow::Error to git2::Error
-            // Since we need to return a git2::Error for retry logic,
-            // we create a generic git2 error
-            Err(git2::Error::from_str(&e.to_string()))
+// Build the repository index from the working tree
+fn build_index(repo: &Repository) -> Result<()> {
+    let work_tree = repo
+        .workdir()
+        .context("repository has no working directory")?;
+
+    // Try optimized path first, fall back to standard approach
+    if let Some(files) = discover_files(work_tree)? {
+        update_index_from_file_list(repo, files)
+    } else {
+        update_index_standard(repo)
+    }
+}
+
+// Discover files in the working tree using git ls-files for performance
+// Returns None if git ls-files is not available
+fn discover_files(work_tree: &Path) -> Result<Option<Vec<String>>> {
+    let git_dir = work_tree.join(".git");
+    if !git_dir.exists() {
+        return Ok(None);
+    }
+
+    let output = Command::new("git")
+        .current_dir(work_tree)
+        .args([
+            "ls-files",
+            "-z",                 // Null-terminated
+            "--cached",           // Tracked files
+            "--others",           // Untracked files
+            "--exclude-standard", // Respect .gitignore
+        ])
+        .output()
+        .context("failed to run git ls-files")?;
+
+    if !output.status.success() {
+        return Ok(None);
+    }
+
+    let mut files = Vec::new();
+    if !output.stdout.is_empty() {
+        for file_bytes in output.stdout.split(|&b| b == 0).filter(|s| !s.is_empty()) {
+            let file_path =
+                std::str::from_utf8(file_bytes).context("invalid UTF-8 in file path")?;
+
+            // Skip internal git directories
+            if should_skip_path(file_path) {
+                continue;
+            }
+
+            files.push(file_path.to_string());
         }
     }
+
+    Ok(Some(files))
+}
+
+// Update index using a pre-discovered file list
+fn update_index_from_file_list(repo: &Repository, files: Vec<String>) -> Result<()> {
+    let mut index = repo.index().context("failed to get index")?;
+
+    // Update tracked files first (uses stat cache)
+    index
+        .update_all(["."].iter(), None)
+        .context("failed to update tracked files")?;
+
+    // Remove stale entries
+    remove_stale_entries(&mut index, &files)?;
+
+    // Add new files
+    for file_path in files {
+        let _ = index.add_path(Path::new(&file_path));
+    }
+
+    index.write().context("failed to write index")?;
+    Ok(())
+}
+
+// Remove index entries for files that no longer exist
+fn remove_stale_entries(index: &mut git2::Index, current_files: &[String]) -> Result<()> {
+    let files_set: std::collections::HashSet<&str> =
+        current_files.iter().map(|s| s.as_str()).collect();
+
+    let mut to_remove = Vec::new();
+    for i in 0..index.len() {
+        if let Some(entry) = index.get(i)
+            && let Ok(path_str) = std::str::from_utf8(&entry.path)
+            && !files_set.contains(path_str)
+        {
+            to_remove.push(path_str.to_string());
+        }
+    }
+
+    for path in to_remove {
+        index.remove_path(Path::new(&path))?;
+    }
+
+    Ok(())
+}
+
+// Standard index update using libgit2
+fn update_index_standard(repo: &Repository) -> Result<()> {
+    let mut index = repo.index()?;
+
+    // Update tracked files
+    index
+        .update_all(["."].iter(), None)
+        .context("failed to update tracked files")?;
+
+    // Add new files
+    index
+        .add_all(["."].iter(), git2::IndexAddOption::DEFAULT, None)
+        .context("failed to add new files")?;
+
+    // Clean up internal directories
+    let _ = index.remove_all([".autosnap", ".git"], None);
+
+    index.write().context("failed to write index")?;
+    Ok(())
+}
+
+// Check if a path should be excluded from indexing
+fn should_skip_path(path: &str) -> bool {
+    path.starts_with(".git/")
+        || path.starts_with(".autosnap/")
+        || path == ".git"
+        || path == ".autosnap"
+}
+
+// Try to build the index and write out the tree once.
+// Returns the new tree id or the underlying git2 error.
+fn try_write_tree(repo: &Repository) -> std::result::Result<Oid, git2::Error> {
+    // Build the index from working tree
+    if let Err(e) = build_index(repo) {
+        return Err(git2::Error::from_str(&e.to_string()));
+    }
+
+    // Get the index and write the tree
+    let mut index = repo.index()?;
+    index.write_tree()
 }
 
 // Retry wrapper with exponential backoff for transient FS-change errors.
 fn write_tree_with_retries(
     repo: &Repository,
-    repo_root: &Path,
     max_attempts: u32,
     initial_backoff_ms: u64,
 ) -> Result<Oid> {
     let mut backoff_ms = initial_backoff_ms;
     let mut attempt = 1u32;
     loop {
-        match try_write_tree(repo, repo_root) {
+        match try_write_tree(repo) {
             Ok(oid) => return Ok(oid),
             Err(e) if is_transient_fs_change(&e) && attempt < max_attempts => {
                 warn!(
@@ -807,47 +932,17 @@ pub fn restore(
     Ok(())
 }
 
-// Helper function to build a tree from the working directory using status API
-// This respects .gitignore and avoids walking into ignored directories
+// Build a tree from the working directory for diff operations
 fn build_working_tree_from_status<'a>(repo: &'a Repository, repo_root: &Path) -> Result<Tree<'a>> {
-    // Open the main repository to use its ignore rules
-    let main_repo = Repository::discover(repo_root).context("failed to open main repository")?;
+    // Set the workdir temporarily for the bare repo
+    repo.set_workdir(repo_root, false)
+        .context("failed to set workdir")?;
 
-    // Get status from main repo - this respects .gitignore and doesn't walk ignored dirs
-    let mut status_opts = git2::StatusOptions::new();
-    status_opts
-        .include_untracked(true)
-        .recurse_untracked_dirs(true)
-        .include_ignored(false); // Don't include ignored files
+    // Build the index from working tree
+    build_index(repo).context("failed to build index")?;
 
-    let statuses = main_repo
-        .statuses(Some(&mut status_opts))
-        .context("failed to get repository status")?;
-
-    // Build index in the autosnap repo
+    // Get the index and write the tree
     let mut index = repo.index().context("failed to get index")?;
-    index.clear().context("failed to clear index")?;
-
-    // Add each non-ignored file to the index
-    for entry in statuses.iter() {
-        if let Some(path) = entry.path() {
-            // Skip .git and .autosnap directories explicitly
-            if path.starts_with(".git/")
-                || path.starts_with(".autosnap/")
-                || path == ".git"
-                || path == ".autosnap"
-            {
-                continue;
-            }
-
-            // Add the file to the index
-            index
-                .add_path(std::path::Path::new(path))
-                .with_context(|| format!("failed to add path: {}", path))?;
-        }
-    }
-
-    index.write().context("failed to write index")?;
     let tree_oid = index.write_tree().context("failed to write tree")?;
     repo.find_tree(tree_oid).context("failed to find tree")
 }
