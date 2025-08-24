@@ -1,12 +1,14 @@
 use anyhow::{Context, Result, bail};
 use console::Style;
-use git2::{Commit, IndexAddOption, Repository, Signature, Tree};
+use git2::{Commit, IndexAddOption, Oid, Repository, Signature, Tree};
+use git2::{ErrorClass, ErrorCode};
 use skim::Skim;
 use skim::prelude::{SkimItemReader, SkimOptionsBuilder};
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Cursor, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use tracing::warn;
 
 /// Discover the current repository root directory.
 pub fn repo_root() -> Result<PathBuf> {
@@ -110,18 +112,9 @@ pub fn snapshot_once(repo_root: &Path, message: Option<&str>) -> Result<()> {
         .with_context(|| format!("failed to set workdir to {}", repo_root.display()))?;
 
     // Build index from the working directory, respecting .gitignore (libgit2)
-    let mut index = repo
-        .index()
-        .context("failed to open index for autosnap repo")?;
-    index
-        .add_all(["*"], IndexAddOption::DEFAULT, None)
-        .context("index add_all failed")?;
-    // Best-effort remove .autosnap and .git if they got picked up
-    let _ = index.remove_all([".autosnap", ".git"], None);
-    index.write().context("failed to write index")?;
-    let tree_id = index
-        .write_tree()
-        .context("failed to write tree from index")?;
+    // with retries to tolerate transient file modifications during read.
+    let tree_id = write_tree_with_retries(&repo, 5, 50)
+        .context("failed to write tree from index (after retries)")?;
     let tree = repo
         .find_tree(tree_id)
         .context("failed to find written tree")?;
@@ -175,6 +168,56 @@ pub fn snapshot_once(repo_root: &Path, message: Option<&str>) -> Result<()> {
     }
 
     Ok(())
+}
+
+// Determine if a git2 error is likely a transient filesystem race
+// where a file changed between stat and read during index population.
+fn is_transient_fs_change(err: &git2::Error) -> bool {
+    matches!(err.class(), ErrorClass::Filesystem)
+        || matches!(err.code(), ErrorCode::Modified)
+        || err
+            .message()
+            .to_lowercase()
+            .contains("file changed before we could read it")
+}
+
+// Try to build the index and write out the tree once.
+// Returns the new tree id or the underlying git2 error.
+fn try_write_tree(repo: &Repository) -> std::result::Result<Oid, git2::Error> {
+    let mut index = repo.index()?;
+    index.add_all(["*"], IndexAddOption::DEFAULT, None)?;
+    // Best-effort remove .autosnap and .git if they got picked up
+    let _ = index.remove_all([".autosnap", ".git"], None);
+    index.write()?;
+    index.write_tree()
+}
+
+// Retry wrapper with exponential backoff for transient FS-change errors.
+fn write_tree_with_retries(
+    repo: &Repository,
+    max_attempts: u32,
+    initial_backoff_ms: u64,
+) -> Result<Oid> {
+    let mut backoff_ms = initial_backoff_ms;
+    let mut attempt = 1u32;
+    loop {
+        match try_write_tree(repo) {
+            Ok(oid) => return Ok(oid),
+            Err(e) if is_transient_fs_change(&e) && attempt < max_attempts => {
+                warn!(
+                    attempt,
+                    backoff_ms,
+                    "transient index build error, retrying after backoff: {}",
+                    e.message()
+                );
+            }
+            Err(e) => return Err(anyhow::Error::from(e).context("index build failed")),
+        }
+
+        std::thread::sleep(std::time::Duration::from_millis(backoff_ms));
+        attempt += 1;
+        backoff_ms = (backoff_ms * 2).min(800);
+    }
 }
 
 /// Garbage collect snapshots - compress objects and optionally prune old ones.
