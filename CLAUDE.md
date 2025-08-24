@@ -77,7 +77,7 @@ The codebase is organized into distinct modules that handle specific responsibil
 1. **Dual Repository Architecture**: Main git repo + hidden `.autosnap` bare repo for snapshots
 2. **Single Instance Enforcement**: PID-based locking prevents multiple watchers
 3. **Signal-Based Shutdown**: SIGTERM/SIGINT triggers final snapshot before exit
-4. **Debounced File Watching**: Configurable delay (default 200ms) to batch rapid changes
+4. **Debounced File Watching**: Configurable delay (default 1000ms) to batch rapid changes
 5. **Git-Aware Ignoring**: Respects .gitignore patterns via watchexec-filterer-ignore
 
 ### Snapshot Storage Format
@@ -90,7 +90,7 @@ The codebase is organized into distinct modules that handle specific responsibil
 ### Configuration Hierarchy
 
 Git config values (local → global → system precedence):
-- `autosnap.debounce-ms`: Watcher debounce window (default: 200)
+- `autosnap.debounce-ms`: Watcher debounce window (default: 1000)
 - `autosnap.gc.prune-days`: Snapshot retention days (default: 60)
 
 ## Testing Strategy

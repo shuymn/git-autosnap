@@ -14,7 +14,7 @@ pub struct AutosnapConfig {
 impl Default for AutosnapConfig {
     fn default() -> Self {
         Self {
-            debounce_ms: 200,
+            debounce_ms: 1000,
             prune_days: 60,
         }
     }

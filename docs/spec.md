@@ -28,7 +28,7 @@
 flowchart TD
     A[OS watch<br/>backend] -->|fs events| B[watchexec<br/>layer]
     B --> C[async event loop]
-    C --> D[debounce /<br/>coalesce 200 ms]
+    C --> D[debounce /<br/>coalesce 1000 ms]
     C --> E[SIGINT/TERM<br/>handler]
     C --> F[service resume<br/>hook]
     D --> G[Snapshot Committer<br/>git2, libgit2 v1.7]
@@ -47,7 +47,7 @@ flowchart TD
 * **Path-set** : repo root, recursive
 * **Ignore rules** : `watchexec` built-in .gitignore support + hard-coded
   `/.git/, /.autosnap/`
-* **Debounce/Throttle** : 200 ms sliding window (provided by watchexec)
+* **Debounce/Throttle** : 1000 ms sliding window (provided by watchexec)
 
 #### 4.2 Git Layer
 

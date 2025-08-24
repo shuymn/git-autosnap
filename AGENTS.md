@@ -31,6 +31,5 @@
 
 ## Configuration & Architecture Notes
 - Local bare repo at `.autosnap/`; main history untouched. Respects `.gitignore`.
-- Config via `git config`: `autosnap.debounce-ms` (default 200), `autosnap.gc.prune-days` (default 60).
+- Config via `git config`: `autosnap.debounce-ms` (default 1000), `autosnap.gc.prune-days` (default 60).
 - Daemon uses PID at `.autosnap/autosnap.pid`; signals: SIGTERM/SIGINT (graceful), SIGUSR1 (snapshot), SIGUSR2 (hot‑reload).
-
