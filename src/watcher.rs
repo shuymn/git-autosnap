@@ -5,7 +5,7 @@ use anyhow::{Context, Result, anyhow};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::Duration;
 use tracing::{error, info, warn};
@@ -61,15 +61,19 @@ pub fn start_foreground(repo_root: &Path, cfg: &AutosnapConfig) -> Result<()> {
     rt.block_on(run_watcher(repo_root, cfg.debounce_ms))
 }
 
+// Exit actions to perform after the watcher stops.
+// Higher value means higher precedence when coalescing multiple intents.
+const EXIT_NONE: u8 = 0;
+const EXIT_SNAPSHOT: u8 = 1;
+const EXIT_RELOAD_EXEC: u8 = 2;
+const EXIT_BINARY_UPDATE_EXEC: u8 = 3;
+
 /// Shared watcher state used by handlers.
 struct WatcherState {
     repo_root: PathBuf,
     tracked_ignores: HashSet<PathBuf>,
-    binary_update_requested: Arc<AtomicBool>,
-    // Whether to run a final snapshot after the watcher stops
-    final_snapshot_on_exit: Arc<AtomicBool>,
-    // Whether to exec immediately after stopping (e.g., ignore file updates)
-    reload_requested: Arc<AtomicBool>,
+    // What to do after the watcher stops (snapshot/reload/binary update).
+    exit_action: Arc<AtomicU8>,
     binary_update_tx: Sender<bool>,
     original_binary_metadata: Option<std::fs::Metadata>,
     snapshot_in_progress: Arc<AtomicBool>,
@@ -79,6 +83,20 @@ struct WatcherState {
 enum Flow {
     Continue,
     Quit,
+}
+
+// Ensure we only ever increase the exit action's precedence.
+fn elevate_exit_action(exit_action: &Arc<AtomicU8>, new: u8) {
+    let mut cur = exit_action.load(Ordering::SeqCst);
+    loop {
+        if cur >= new {
+            break;
+        }
+        match exit_action.compare_exchange(cur, new, Ordering::SeqCst, Ordering::SeqCst) {
+            Ok(_) => break,
+            Err(actual) => cur = actual,
+        }
+    }
 }
 
 async fn run_watcher(repo_root: PathBuf, debounce_ms: u64) -> Result<()> {
@@ -94,9 +112,7 @@ async fn run_watcher(repo_root: PathBuf, debounce_ms: u64) -> Result<()> {
 
     // State shared with handler
     let (binary_update_tx, binary_update_rx) = std::sync::mpsc::channel::<bool>();
-    let binary_update_requested = Arc::new(AtomicBool::new(false));
-    let final_snapshot_on_exit = Arc::new(AtomicBool::new(false));
-    let reload_requested = Arc::new(AtomicBool::new(false));
+    let exit_action = Arc::new(AtomicU8::new(EXIT_NONE));
     let snapshot_in_progress = Arc::new(AtomicBool::new(false));
 
     // Capture original binary metadata at startup for hot-reload detection
@@ -107,9 +123,7 @@ async fn run_watcher(repo_root: PathBuf, debounce_ms: u64) -> Result<()> {
     let state = Arc::new(WatcherState {
         repo_root: repo_root.clone(),
         tracked_ignores: tracked_ignore_files,
-        binary_update_requested: binary_update_requested.clone(),
-        final_snapshot_on_exit: final_snapshot_on_exit.clone(),
-        reload_requested: reload_requested.clone(),
+        exit_action: exit_action.clone(),
         binary_update_tx,
         original_binary_metadata,
         snapshot_in_progress,
@@ -161,7 +175,8 @@ async fn run_watcher(repo_root: PathBuf, debounce_ms: u64) -> Result<()> {
 
     // Perform any requested final actions outside the watchexec action callback
     // to avoid blocking the internal event channel.
-    if final_snapshot_on_exit.load(Ordering::SeqCst) {
+    let action = exit_action.load(Ordering::SeqCst);
+    if action >= EXIT_SNAPSHOT {
         if let Err(e) = gitlayer::snapshot_once(&repo_root, None) {
             error!(error = ?e, "final snapshot failed");
         } else {
@@ -170,10 +185,10 @@ async fn run_watcher(repo_root: PathBuf, debounce_ms: u64) -> Result<()> {
     }
 
     // If a binary update was requested, wait for the new binary and exec.
-    await_binary_update_and_maybe_exec(&binary_update_requested, &binary_update_rx);
-
-    // If a simple reload was requested (e.g., ignore files changed), exec now.
-    if reload_requested.load(Ordering::SeqCst) {
+    if action == EXIT_BINARY_UPDATE_EXEC {
+        await_binary_update_and_maybe_exec(&binary_update_rx);
+    } else if action == EXIT_RELOAD_EXEC {
+        // If a simple reload was requested (e.g., ignore files changed), exec now.
         info!("reloading after ignore file change");
         perform_exec();
         warn!("exec failed after ignore reload, exiting normally");
@@ -220,8 +235,8 @@ fn handle_ignore_file_updates(paths: &[(&Path, Option<&FileType>)], state: &Watc
         if state.tracked_ignores.contains(*path) {
             info!("detected change to tracked ignore file: {}", path.display());
             // Defer heavy work: final snapshot and exec after we stop the watcher loop.
-            state.final_snapshot_on_exit.store(true, Ordering::SeqCst);
-            state.reload_requested.store(true, Ordering::SeqCst);
+            // Elevate exit action to reload-exec.
+            elevate_exit_action(&state.exit_action, EXIT_RELOAD_EXEC);
             return Flow::Quit; // cause wx to stop; we'll exec after it returns
         }
     }
@@ -237,7 +252,7 @@ fn handle_signals(signals: &[watchexec_signals::Signal], state: &WatcherState) -
                 info!("received shutdown signal; scheduling final snapshot");
                 // Defer final snapshot until after wx has stopped to avoid blocking the
                 // watchexec action channel. This prevents channel-full errors.
-                state.final_snapshot_on_exit.store(true, Ordering::SeqCst);
+                elevate_exit_action(&state.exit_action, EXIT_SNAPSHOT);
                 return Flow::Quit; // stop wx; outer scope will run snapshot
             }
             // SIGHUP: Reload (for future config reload implementation)
@@ -313,11 +328,9 @@ fn handle_fs_events(paths: &[(&Path, Option<&FileType>)], state: &WatcherState) 
 }
 
 fn request_binary_update(state: &WatcherState) {
-    // Phase 1: Defer final snapshot to after the watcher stops
-    state.final_snapshot_on_exit.store(true, Ordering::SeqCst);
-
-    // Phase 2: Start polling for binary change and mark that we'll exec
-    state.binary_update_requested.store(true, Ordering::SeqCst);
+    // Defer final snapshot and exec to after the watcher stops and
+    // choose the highest-precedence action: binary update exec.
+    elevate_exit_action(&state.exit_action, EXIT_BINARY_UPDATE_EXEC);
     let exe_path = match std::env::current_exe() {
         Ok(p) => p,
         Err(e) => {
@@ -378,11 +391,8 @@ fn request_binary_update(state: &WatcherState) {
     });
 }
 
-fn await_binary_update_and_maybe_exec(requested: &AtomicBool, rx: &Receiver<bool>) {
-    // Only wait for binary update window if SIGUSR2 was received
-    if requested.load(Ordering::SeqCst)
-        && let Ok(should_exec) = rx.recv_timeout(Duration::from_secs(16))
-    {
+fn await_binary_update_and_maybe_exec(rx: &Receiver<bool>) {
+    if let Ok(should_exec) = rx.recv_timeout(Duration::from_secs(16)) {
         if should_exec {
             info!("binary update detected, performing exec");
             perform_exec();
