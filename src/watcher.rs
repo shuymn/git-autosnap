@@ -57,7 +57,6 @@ pub fn start_foreground(repo_root: &Path, cfg: &AutosnapConfig) -> Result<()> {
         .build()
         .context("failed to build tokio runtime")?;
 
-    let repo_root = repo_root.to_path_buf();
     rt.block_on(run_watcher(repo_root, cfg.debounce_ms))
 }
 
@@ -113,9 +112,9 @@ fn load_exit_action(exit_action: &Arc<AtomicU8>) -> ExitAction {
     }
 }
 
-async fn run_watcher(repo_root: PathBuf, debounce_ms: u64) -> Result<()> {
+async fn run_watcher(repo_root: &Path, debounce_ms: u64) -> Result<()> {
     // Build git-aware ignore filterer and tracked ignore files
-    let (filterer, tracked_ignore_files) = build_filterer_and_ignores(&repo_root)
+    let (filterer, tracked_ignore_files) = build_filterer_and_ignores(repo_root)
         .await
         .context("failed to create watchexec")?;
 
@@ -124,7 +123,31 @@ async fn run_watcher(repo_root: PathBuf, debounce_ms: u64) -> Result<()> {
         tracked_ignore_files.len()
     );
 
-    // State shared with handler
+    // Build shared state and binary update channel
+    let (state, binary_update_rx) = build_state(repo_root, tracked_ignore_files)?;
+
+    // Build watchexec config and start
+    let config = build_watchexec_config(state.clone(), filterer, debounce_ms);
+    let wx = Watchexec::with_config(config).context("failed to create watchexec")?;
+
+    info!(path = %repo_root.display(), debounce_ms, "watching");
+    let handle = wx.main();
+    let result = match handle.await {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(e)) => Err(anyhow!("watchexec critical error: {e}")),
+        Err(e) => Err(anyhow!("watchexec task join error: {e}")),
+    };
+
+    // Perform any requested final actions outside the watchexec action callback
+    finalize_exit_actions(repo_root, &state.exit_action, &binary_update_rx);
+
+    result
+}
+
+fn build_state(
+    repo_root: &Path,
+    tracked_ignore_files: HashSet<PathBuf>,
+) -> Result<(Arc<WatcherState>, Receiver<bool>)> {
     let (binary_update_tx, binary_update_rx) = sync_channel::<bool>(1);
     let exit_action = Arc::new(AtomicU8::new(ExitAction::None as u8));
     let snapshot_in_progress = Arc::new(AtomicBool::new(false));
@@ -135,7 +158,7 @@ async fn run_watcher(repo_root: PathBuf, debounce_ms: u64) -> Result<()> {
         .and_then(|path| path.metadata().ok());
 
     let state = Arc::new(WatcherState {
-        repo_root: repo_root.clone(),
+        repo_root: repo_root.to_path_buf(),
         tracked_ignores: tracked_ignore_files,
         exit_action: exit_action.clone(),
         binary_update_tx,
@@ -143,7 +166,14 @@ async fn run_watcher(repo_root: PathBuf, debounce_ms: u64) -> Result<()> {
         snapshot_in_progress,
     });
 
-    // Create config first to properly initialize watchexec
+    Ok((state, binary_update_rx))
+}
+
+fn build_watchexec_config(
+    state: Arc<WatcherState>,
+    filterer: IgnoreFilterer,
+    debounce_ms: u64,
+) -> watchexec::Config {
     let config = watchexec::Config::default();
 
     // Handler: trigger snapshot on any coalesced (throttled) event batch
@@ -170,52 +200,45 @@ async fn run_watcher(repo_root: PathBuf, debounce_ms: u64) -> Result<()> {
     });
 
     // Configure watchexec paths, filters and throttling
-    config.pathset([repo_root.to_path_buf()]);
+    config.pathset([state.repo_root.clone()]);
     config.filterer(filterer);
     config.throttle(Duration::from_millis(debounce_ms));
     config.on_error(|err: watchexec::ErrorHook| {
         tracing::error!("watchexec error: {}", err.error);
     });
 
-    let wx = Watchexec::with_config(config).context("failed to create watchexec")?;
+    config
+}
 
-    info!(path = %repo_root.display(), debounce_ms, "watching");
-    let handle = wx.main();
-    let result = match handle.await {
-        Ok(Ok(())) => Ok(()),
-        Ok(Err(e)) => Err(anyhow!("watchexec critical error: {e}")),
-        Err(e) => Err(anyhow!("watchexec task join error: {e}")),
-    };
+fn finalize_exit_actions(
+    repo_root: &Path,
+    exit_action: &Arc<AtomicU8>,
+    binary_update_rx: &Receiver<bool>,
+) {
+    let action = load_exit_action(exit_action);
 
-    // Perform any requested final actions outside the watchexec action callback
-    // to avoid blocking the internal event channel.
-    let action = load_exit_action(&exit_action);
     if (action as u8) >= (ExitAction::Snapshot as u8) {
-        if let Err(e) = gitlayer::snapshot_once(&repo_root, None) {
+        if let Err(e) = gitlayer::snapshot_once(repo_root, None) {
             error!(error = ?e, "final snapshot failed");
         } else {
             info!("final snapshot created");
         }
     }
 
-    // If a binary update was requested, wait for the new binary and exec.
     if action == ExitAction::BinaryUpdateExec {
-        await_binary_update_and_maybe_exec(&binary_update_rx);
+        await_binary_update_and_maybe_exec(binary_update_rx);
     } else if action == ExitAction::ReloadExec {
-        // If a simple reload was requested (e.g., ignore files changed), exec now.
         info!("reloading after ignore file change");
         perform_exec();
         warn!("exec failed after ignore reload, exiting normally");
     }
-
-    result
 }
 
 async fn build_filterer_and_ignores(
-    repo_root: &PathBuf,
+    repo_root: &Path,
 ) -> Result<(IgnoreFilterer, HashSet<PathBuf>)> {
     // Build git-aware ignore filterer (project + environment), then add hard excludes
-    let (mut origin_files, _errors1) = ignore_files::from_origin(repo_root.as_path()).await;
+    let (mut origin_files, _errors1) = ignore_files::from_origin(repo_root).await;
     let (env_files, _errors2) = ignore_files::from_environment(None).await;
 
     // Track all ignore file paths for change detection
@@ -237,7 +260,7 @@ async fn build_filterer_and_ignores(
         .await
         .map_err(|e| anyhow!("ignore filter build failed: {e}"))?;
     filter
-        .add_globs(&["/.git", "/.autosnap"], Some(repo_root))
+        .add_globs(&["/.git", "/.autosnap"], Some(&repo_root.to_path_buf()))
         .map_err(|e| anyhow!("ignore hard excludes failed: {e}"))?;
     let filterer = IgnoreFilterer(filter);
 
