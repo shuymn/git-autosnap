@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, bail};
 use console::Style;
-use git2::{Commit, IndexAddOption, Oid, Repository, Signature, Tree};
+use git2::{Commit, Oid, Repository, Signature, Tree};
 use git2::{ErrorClass, ErrorCode};
 use skim::Skim;
 use skim::prelude::{SkimItemReader, SkimOptionsBuilder};
@@ -113,7 +113,7 @@ pub fn snapshot_once(repo_root: &Path, message: Option<&str>) -> Result<()> {
 
     // Build index from the working directory, respecting .gitignore (libgit2)
     // with retries to tolerate transient file modifications during read.
-    let tree_id = write_tree_with_retries(&repo, 5, 50)
+    let tree_id = write_tree_with_retries(&repo, repo_root, 5, 50)
         .context("failed to write tree from index (after retries)")?;
     let tree = repo
         .find_tree(tree_id)
@@ -183,25 +183,30 @@ fn is_transient_fs_change(err: &git2::Error) -> bool {
 
 // Try to build the index and write out the tree once.
 // Returns the new tree id or the underlying git2 error.
-fn try_write_tree(repo: &Repository) -> std::result::Result<Oid, git2::Error> {
-    let mut index = repo.index()?;
-    index.add_all(["*"], IndexAddOption::DEFAULT, None)?;
-    // Best-effort remove .autosnap and .git if they got picked up
-    let _ = index.remove_all([".autosnap", ".git"], None);
-    index.write()?;
-    index.write_tree()
+fn try_write_tree(repo: &Repository, repo_root: &Path) -> std::result::Result<Oid, git2::Error> {
+    // Use the helper function to build the tree
+    match build_working_tree_from_status(repo, repo_root) {
+        Ok(tree) => Ok(tree.id()),
+        Err(e) => {
+            // Convert anyhow::Error to git2::Error
+            // Since we need to return a git2::Error for retry logic,
+            // we create a generic git2 error
+            Err(git2::Error::from_str(&e.to_string()))
+        }
+    }
 }
 
 // Retry wrapper with exponential backoff for transient FS-change errors.
 fn write_tree_with_retries(
     repo: &Repository,
+    repo_root: &Path,
     max_attempts: u32,
     initial_backoff_ms: u64,
 ) -> Result<Oid> {
     let mut backoff_ms = initial_backoff_ms;
     let mut attempt = 1u32;
     loop {
-        match try_write_tree(repo) {
+        match try_write_tree(repo, repo_root) {
             Ok(oid) => return Ok(oid),
             Err(e) if is_transient_fs_change(&e) && attempt < max_attempts => {
                 warn!(
@@ -802,6 +807,51 @@ pub fn restore(
     Ok(())
 }
 
+// Helper function to build a tree from the working directory using status API
+// This respects .gitignore and avoids walking into ignored directories
+fn build_working_tree_from_status<'a>(repo: &'a Repository, repo_root: &Path) -> Result<Tree<'a>> {
+    // Open the main repository to use its ignore rules
+    let main_repo = Repository::discover(repo_root).context("failed to open main repository")?;
+
+    // Get status from main repo - this respects .gitignore and doesn't walk ignored dirs
+    let mut status_opts = git2::StatusOptions::new();
+    status_opts
+        .include_untracked(true)
+        .recurse_untracked_dirs(true)
+        .include_ignored(false); // Don't include ignored files
+
+    let statuses = main_repo
+        .statuses(Some(&mut status_opts))
+        .context("failed to get repository status")?;
+
+    // Build index in the autosnap repo
+    let mut index = repo.index().context("failed to get index")?;
+    index.clear().context("failed to clear index")?;
+
+    // Add each non-ignored file to the index
+    for entry in statuses.iter() {
+        if let Some(path) = entry.path() {
+            // Skip .git and .autosnap directories explicitly
+            if path.starts_with(".git/")
+                || path.starts_with(".autosnap/")
+                || path == ".git"
+                || path == ".autosnap"
+            {
+                continue;
+            }
+
+            // Add the file to the index
+            index
+                .add_path(std::path::Path::new(path))
+                .with_context(|| format!("failed to add path: {}", path))?;
+        }
+    }
+
+    index.write().context("failed to write index")?;
+    let tree_oid = index.write_tree().context("failed to write tree")?;
+    repo.find_tree(tree_oid).context("failed to find tree")
+}
+
 /// Output format for diff display
 #[derive(Debug, Clone, Copy)]
 pub enum DiffFormat {
@@ -861,14 +911,7 @@ pub fn diff(
         // No arguments: compare working tree to HEAD
         (None, None) => {
             // Working tree
-            let mut index = repo.index()?;
-            index.clear()?;
-            index.add_all(["*"], IndexAddOption::DEFAULT, None)?;
-            // Remove .autosnap and .git directories
-            let _ = index.remove_all([".autosnap", ".git"], None);
-            index.write()?;
-            let tree_oid = index.write_tree()?;
-            let work_tree = repo.find_tree(tree_oid)?;
+            let work_tree = build_working_tree_from_status(&repo, repo_root)?;
 
             // HEAD
             let head = repo
@@ -890,14 +933,7 @@ pub fn diff(
             let commit_tree = commit.tree()?;
 
             // Working tree
-            let mut index = repo.index()?;
-            index.clear()?;
-            index.add_all(["*"], IndexAddOption::DEFAULT, None)?;
-            // Remove .autosnap and .git directories
-            let _ = index.remove_all([".autosnap", ".git"], None);
-            index.write()?;
-            let tree_oid = index.write_tree()?;
-            let work_tree = repo.find_tree(tree_oid)?;
+            let work_tree = build_working_tree_from_status(&repo, repo_root)?;
 
             (Some(commit_tree), Some(work_tree))
         }
@@ -922,14 +958,7 @@ pub fn diff(
         // None for first but Some for second doesn't make sense, treat as working tree vs commit2
         (None, Some(ref commit_ref)) => {
             // Working tree
-            let mut index = repo.index()?;
-            index.clear()?;
-            index.add_all(["*"], IndexAddOption::DEFAULT, None)?;
-            // Remove .autosnap and .git directories
-            let _ = index.remove_all([".autosnap", ".git"], None);
-            index.write()?;
-            let tree_oid = index.write_tree()?;
-            let work_tree = repo.find_tree(tree_oid)?;
+            let work_tree = build_working_tree_from_status(&repo, repo_root)?;
 
             let obj = repo
                 .revparse_single(commit_ref)
