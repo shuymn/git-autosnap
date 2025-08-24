@@ -1,60 +1,151 @@
-# Implementation Plan
+# Implementation Plan: Hybrid Git Operations for Performance
 
-## Watcher Cleanup and Style Compliance
+## Problem Statement
+The `snapshot_once` operation using libgit2's `git_index_add_all()` is extremely slow (~30-70s) when traversing large ignored directories like `target/` (6.1GB). Research confirms that:
+- libgit2's callback cannot prevent directory traversal (only filters what gets added to index)
+- The performance issue is fundamental to libgit2's architecture, not related to bare vs non-bare repositories
+- Git CLI handles this much more efficiently through multi-threading and better ignore handling
 
-Goals
-- Eliminate ad-hoc state in `watcher.rs` by introducing a typed exit intent and bounded channels.
-- Reduce function size and improve readability without changing behavior.
-- Align with docs/style.md: avoid blocking in async contexts, set timeouts/buffer limits, and document public items.
+## Solution: Hybrid Approach
+Use libgit2 for most operations but shell out to git CLI for performance-critical index operations.
 
-Scope
-- `src/watcher.rs` (primary), minimal supporting changes if needed.
-- Tests for precedence and behavior where feasible.
+## Implementation Details
 
-Plan
-1) Bounded channel for binary-update poller (MUST)
-   - Replace `std::sync::mpsc::channel` with `sync_channel(1)`.
-   - Update `WatcherState` to use `SyncSender<bool>`.
-   - Keep receiver side unchanged; ensure no unbounded buffering.
+### 1. Core Changes to `try_write_tree` (MUST)
 
-2) Typed exit intent (SHOULD)
-   - Introduce `#[repr(u8)] enum ExitAction { None=0, Snapshot=1, ReloadExec=2, BinaryUpdateExec=3 }`.
-   - Store `Arc<AtomicU8>` in state (for atomic updates) and provide helpers:
-     - `fn elevate_exit_action(exit: &Arc<AtomicU8>, new: ExitAction)` — only increases precedence.
-     - `fn load_exit_action(exit: &Arc<AtomicU8>) -> ExitAction` — converts byte to enum safely.
-   - Replace raw constants and casts with enum helpers for clarity.
+**Location**: `src/gitlayer.rs::try_write_tree()`
 
-3) Split `run_watcher` into focused helpers (SHOULD)
-   - `fn build_state(repo_root: &Path) -> (Arc<WatcherState>, Receiver<bool>)` — sets up state, original metadata, and bounded channel.
-   - `fn build_watchexec_config(state: Arc<WatcherState>, filterer: IgnoreFilterer, debounce_ms: u64) -> watchexec::Config` — wires callbacks, filters, throttle, and errors.
-   - `fn finalize_exit_actions(repo_root: &Path, exit: &Arc<AtomicU8>, binary_rx: &Receiver<bool>)` — performs final snapshot and optional execs per precedence.
-   - Keep existing `build_filterer_and_ignores` as-is.
+**Current approach** (slow):
+```rust
+index.add_all(["*"], IndexAddOption::DEFAULT, None)?;
+```
 
-4) Non-blocking snapshots (NICE)
-   - Consider `tokio::task::spawn_blocking` instead of `std::thread::spawn` for snapshot work to integrate with the runtime, while still keeping callback non-blocking.
-   - Maintain the `snapshot_in_progress` lock semantics.
+**New approach** (fast):
+```rust
+// Use git CLI for efficient index building that respects .gitignore
+// without traversing ignored directories
+Command::new("git")
+    .args([
+        "--git-dir", ".autosnap",
+        "--work-tree", ".",
+        "add", 
+        "--all",
+        "--ignore-errors"  // Continue even if some files can't be read
+    ])
+    .status()?;
+```
 
-5) Documentation updates (SHOULD)
-   - Add brief `///` docs to public functions describing debounce semantics and exit-action precedence.
-   - Note that heavy work runs after watcher stop to avoid filling internal channels.
+### 2. Helper Function for Git CLI Operations (MUST)
 
-6) Logging consistency (SHOULD)
-   - Ensure structured fields for key events (e.g., `event="snapshot_created"`, `debounce_ms`, `path`).
-   - Keep logs concise at info/warn; use debug for skips due to in-progress snapshot.
+Create a helper to safely execute git commands with proper error handling:
 
-7) Tests (SHOULD)
-   - Add a small unit test for exit-action elevation precedence (pure Rust test, no I/O).
-   - Container tests remain unchanged; optionally assert that ignore-file changes cause a reload exec path.
+```rust
+fn git_cli_add_all(git_dir: &Path, work_tree: &Path) -> Result<()> {
+    let status = Command::new("git")
+        .args([
+            "--git-dir", git_dir.to_str().context("invalid git_dir path")?,
+            "--work-tree", work_tree.to_str().context("invalid work_tree path")?,
+            "add",
+            "--all",
+            "--ignore-errors"
+        ])
+        .stderr(Stdio::null())  // Suppress stderr for cleaner output
+        .status()
+        .context("failed to execute git add command")?;
+    
+    if !status.success() {
+        bail!("git add --all failed with status: {}", status);
+    }
+    Ok(())
+}
+```
 
-8) Verification
-   - `cargo fmt`, `cargo clippy -D warnings`, `cargo test`.
-   - Manual smoke test: `git autosnap start`, modify files, send `SIGUSR1`, `SIGINT`, `SIGUSR2`; verify expected behavior and absence of channel backpressure logs.
+### 3. Modified `try_write_tree` Implementation (MUST)
 
-Out of Scope
-- Import grouping/order (left to rustfmt per guidance).
-- Behavior changes beyond readability, bounded channels, and typed exit intent.
+```rust
+fn try_write_tree(repo: &Repository, repo_root: &Path) -> std::result::Result<Oid, git2::Error> {
+    let autosnap_dir = repo_root.join(".autosnap");
+    
+    // Use git CLI for efficient staging
+    if let Err(e) = git_cli_add_all(&autosnap_dir, repo_root) {
+        return Err(git2::Error::from_str(&e.to_string()));
+    }
+    
+    // Read the updated index back
+    let mut index = repo.index()?;
+    index.read(true)?;  // Force re-read from disk
+    
+    // Remove .autosnap and .git if they got picked up
+    let _ = index.remove_all([".autosnap", ".git"], None);
+    
+    index.write()?;
+    index.write_tree()
+}
+```
 
-Acceptance Criteria
-- No functional regressions: snapshots still occur; signals behave as before; hot-reload works.
-- Watchexec callback remains non-blocking; no “sending into a full channel” spam.
-- Code passes fmt/clippy/tests and adheres to style guidelines.
+### 4. Keep libgit2 for Other Operations (MUST)
+
+Continue using libgit2 for operations where it performs well:
+- Repository initialization
+- Commit creation
+- Tree/blob reading
+- Diff operations (when not comparing working tree)
+- History traversal
+
+### 5. Update diff Function for Consistency (SHOULD)
+
+The `build_working_tree_from_status` function in diff should also use the hybrid approach when building trees from the working directory, as it suffers from the same performance issue.
+
+### 6. Testing Strategy (MUST)
+
+1. **Performance tests**: Verify snapshot_once completes in <1s (not 30-70s)
+2. **Correctness tests**: Ensure all non-ignored files are captured
+3. **Edge cases**: 
+   - Binary files
+   - Symlinks  
+   - Files with special characters
+   - Very long paths
+
+### 7. Documentation Updates (SHOULD)
+
+Update CLAUDE.md to note:
+- The hybrid approach and why it's necessary
+- Performance characteristics
+- Git CLI dependency for optimal performance
+
+## Migration Path
+
+### Phase 1: Implement and Test (Current)
+1. Implement `git_cli_add_all` helper
+2. Update `try_write_tree` to use git CLI
+3. Test performance improvement
+4. Verify correctness with existing tests
+
+### Phase 2: Optimize Further (Future)
+1. Consider using git CLI for status operations if needed
+2. Profile other slow operations
+3. Document performance characteristics
+
+## Success Criteria
+
+1. `snapshot_once` completes in <1 second (down from 30-70s)
+2. All existing tests pass
+3. No regression in snapshot completeness
+4. Clear documentation of the hybrid approach
+
+## Out of Scope
+
+- Complete replacement of libgit2 (only targeted optimization)
+- Custom ignore file parser
+- Multi-threading implementation
+- Caching mechanisms
+
+## Notes
+
+This hybrid approach is a pragmatic solution that:
+- Solves the immediate performance problem
+- Maintains compatibility with existing code
+- Uses the right tool for each job
+- Is maintainable and well-documented
+
+The research clearly shows this is not a "hack" but rather a recognized pattern when dealing with libgit2's performance limitations in large repositories.
