@@ -1,151 +1,232 @@
-# Implementation Plan: Hybrid Git Operations for Performance
+# Implementation Plan for `git autosnap logs` Command
 
-## Problem Statement
-The `snapshot_once` operation using libgit2's `git_index_add_all()` is extremely slow (~30-70s) when traversing large ignored directories like `target/` (6.1GB). Research confirms that:
-- libgit2's callback cannot prevent directory traversal (only filters what gets added to index)
-- The performance issue is fundamental to libgit2's architecture, not related to bare vs non-bare repositories
-- Git CLI handles this much more efficiently through multi-threading and better ignore handling
+## Overview
+Implement a `logs` command for git-autosnap to view daemon logs, similar to `docker compose logs`, with support for following log output in real-time.
 
-## Solution: Hybrid Approach
-Use libgit2 for most operations but shell out to git CLI for performance-critical index operations.
+## Core Design Decisions
 
-## Implementation Details
+1. **Log Storage**: Single file `.autosnap/autosnap.log` with daily rotation
+2. **Format**: Human-readable text with timestamp and log level
+3. **CLI Options**: Minimal - just `-f/--follow` and `-n/--lines`
+4. **Dependencies**: Use existing dependencies (tokio) for following, add only `tracing-appender` for rotation
 
-### 1. Core Changes to `try_write_tree` (MUST)
+## Implementation Steps
 
-**Location**: `src/gitlayer.rs::try_write_tree()`
+### 1. Add Log File Writer (`src/logger.rs`)
 
-**Current approach** (slow):
-```rust
-index.add_all(["*"], IndexAddOption::DEFAULT, None)?;
-```
-
-**New approach** (fast):
-```rust
-// Use git CLI for efficient index building that respects .gitignore
-// without traversing ignored directories
-Command::new("git")
-    .args([
-        "--git-dir", ".autosnap",
-        "--work-tree", ".",
-        "add", 
-        "--all",
-        "--ignore-errors"  // Continue even if some files can't be read
-    ])
-    .status()?;
-```
-
-### 2. Helper Function for Git CLI Operations (MUST)
-
-Create a helper to safely execute git commands with proper error handling:
+Create a new module to handle file-based logging with rotation:
 
 ```rust
-fn git_cli_add_all(git_dir: &Path, work_tree: &Path) -> Result<()> {
-    let status = Command::new("git")
-        .args([
-            "--git-dir", git_dir.to_str().context("invalid git_dir path")?,
-            "--work-tree", work_tree.to_str().context("invalid work_tree path")?,
-            "add",
-            "--all",
-            "--ignore-errors"
-        ])
-        .stderr(Stdio::null())  // Suppress stderr for cleaner output
-        .status()
-        .context("failed to execute git add command")?;
+use std::path::Path;
+use anyhow::Result;
+use tracing_appender::rolling;
+use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+
+pub fn init_file_logger(repo_root: &Path, is_daemon: bool) -> Result<()> {
+    let log_dir = repo_root.join(".autosnap");
+    let file_appender = rolling::daily(log_dir, "autosnap.log");
+    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
     
-    if !status.success() {
-        bail!("git add --all failed with status: {}", status);
+    let fmt_layer = fmt::layer()
+        .with_ansi(false)
+        .with_target(false)
+        .with_writer(non_blocking);
+    
+    // Also output to console if not daemon
+    if !is_daemon {
+        // Dual output: file + console
+        // Use fmt::layer() with stdout for console output
     }
+    
+    tracing_subscriber::registry()
+        .with(EnvFilter::from_default_env())
+        .with(fmt_layer)
+        .init();
+    
     Ok(())
 }
 ```
 
-### 3. Modified `try_write_tree` Implementation (MUST)
+### 2. Update CLI (`src/cli.rs`)
+
+Add the new `Logs` command variant:
 
 ```rust
-fn try_write_tree(repo: &Repository, repo_root: &Path) -> std::result::Result<Oid, git2::Error> {
-    let autosnap_dir = repo_root.join(".autosnap");
+/// View watcher logs
+Logs {
+    /// Follow log output (like tail -f)
+    #[arg(short, long)]
+    follow: bool,
     
-    // Use git CLI for efficient staging
-    if let Err(e) = git_cli_add_all(&autosnap_dir, repo_root) {
-        return Err(git2::Error::from_str(&e.to_string()));
-    }
-    
-    // Read the updated index back
-    let mut index = repo.index()?;
-    index.read(true)?;  // Force re-read from disk
-    
-    // Remove .autosnap and .git if they got picked up
-    let _ = index.remove_all([".autosnap", ".git"], None);
-    
-    index.write()?;
-    index.write_tree()
+    /// Number of lines to show (default: 100)
+    #[arg(short = 'n', long, default_value = "100")]
+    lines: usize,
 }
 ```
 
-### 4. Keep libgit2 for Other Operations (MUST)
+### 3. Implement Log Reader (`src/logs.rs`)
 
-Continue using libgit2 for operations where it performs well:
-- Repository initialization
-- Commit creation
-- Tree/blob reading
-- Diff operations (when not comparing working tree)
-- History traversal
+Create the log reading and following functionality using tokio's async capabilities:
 
-### 5. Update diff Function for Consistency (SHOULD)
+```rust
+use std::path::Path;
+use anyhow::Result;
+use tokio::time::{interval, Duration};
+use tokio::fs::File;
+use tokio::io::{AsyncBufReadExt, AsyncSeekExt, BufReader};
+use std::io::SeekFrom;
+use std::collections::VecDeque;
 
-The `build_working_tree_from_status` function in diff should also use the hybrid approach when building trees from the working directory, as it suffers from the same performance issue.
+pub async fn show_logs(repo_root: &Path, follow: bool, lines: usize) -> Result<()> {
+    let log_path = repo_root.join(".autosnap/autosnap.log");
+    
+    if !log_path.exists() {
+        println!("No log file found. The watcher may not have been started yet.");
+        return Ok(());
+    }
+    
+    // Show last N lines
+    print_last_lines(&log_path, lines).await?;
+    
+    if follow {
+        // Watch for changes and print new lines
+        follow_file(&log_path).await?;
+    }
+    
+    Ok(())
+}
 
-### 6. Testing Strategy (MUST)
+async fn print_last_lines(path: &Path, n: usize) -> Result<()> {
+    let file = File::open(path).await?;
+    let reader = BufReader::new(file);
+    let mut lines_buffer = VecDeque::with_capacity(n);
+    let mut lines = reader.lines();
+    
+    // Read all lines into a circular buffer
+    while let Some(line) = lines.next_line().await? {
+        if lines_buffer.len() == n {
+            lines_buffer.pop_front();
+        }
+        lines_buffer.push_back(line);
+    }
+    
+    // Print the last N lines
+    for line in lines_buffer {
+        println!("{}", line);
+    }
+    
+    Ok(())
+}
 
-1. **Performance tests**: Verify snapshot_once completes in <1s (not 30-70s)
-2. **Correctness tests**: Ensure all non-ignored files are captured
-3. **Edge cases**: 
-   - Binary files
-   - Symlinks  
-   - Files with special characters
-   - Very long paths
+async fn follow_file(path: &Path) -> Result<()> {
+    let mut file = File::open(path).await?;
+    let mut last_size = file.metadata().await?.len();
+    
+    // Seek to end to start following from current position
+    file.seek(SeekFrom::End(0)).await?;
+    
+    let mut interval = interval(Duration::from_millis(250)); // Poll 4 times per second
+    
+    loop {
+        interval.tick().await;
+        
+        let metadata = tokio::fs::metadata(path).await?;
+        let current_size = metadata.len();
+        
+        if current_size > last_size {
+            // New content detected, read it
+            let mut reader = BufReader::new(&mut file);
+            let mut line = String::new();
+            
+            while reader.read_line(&mut line).await? > 0 {
+                print!("{}", line);
+                line.clear();
+            }
+            
+            last_size = current_size;
+        } else if current_size < last_size {
+            // File was truncated (log rotation), reopen from beginning
+            file = File::open(path).await?;
+            last_size = 0;
+        }
+    }
+}
+```
 
-### 7. Documentation Updates (SHOULD)
+### 4. Update Watcher Initialization
 
-Update CLAUDE.md to note:
-- The hybrid approach and why it's necessary
-- Performance characteristics
-- Git CLI dependency for optimal performance
+Modify `src/watcher.rs::start_foreground()` to initialize file logging:
 
-## Migration Path
+```rust
+pub fn start_foreground(repo_root: &Path, cfg: &AutosnapConfig) -> Result<()> {
+    // Initialize file logger
+    crate::logger::init_file_logger(repo_root, false)?;
+    
+    // ... rest of existing code
+}
+```
 
-### Phase 1: Implement and Test (Current)
-1. Implement `git_cli_add_all` helper
-2. Update `try_write_tree` to use git CLI
-3. Test performance improvement
-4. Verify correctness with existing tests
+### 5. Update Daemon Mode
 
-### Phase 2: Optimize Further (Future)
-1. Consider using git CLI for status operations if needed
-2. Profile other slow operations
-3. Document performance characteristics
+Modify `src/daemon.rs` to use file-only logging when daemonized:
 
-## Success Criteria
+```rust
+pub fn daemonize(repo_root: &Path) -> Result<()> {
+    // ... existing daemonization code ...
+    
+    // Initialize file-only logger for daemon
+    crate::logger::init_file_logger(repo_root, true)?;
+    
+    // ... rest of existing code
+}
+```
 
-1. `snapshot_once` completes in <1 second (down from 30-70s)
-2. All existing tests pass
-3. No regression in snapshot completeness
-4. Clear documentation of the hybrid approach
+### 6. Update Main Entry Point
 
-## Out of Scope
+Add handling for the `Logs` command in `src/lib.rs`:
 
-- Complete replacement of libgit2 (only targeted optimization)
-- Custom ignore file parser
-- Multi-threading implementation
-- Caching mechanisms
+```rust
+Commands::Logs { follow, lines } => {
+    let repo_root = gitlayer::find_repo_root()?;
+    
+    // Use tokio runtime for async file operations
+    let rt = tokio::runtime::Runtime::new()?;
+    rt.block_on(crate::logs::show_logs(&repo_root, follow, lines))?;
+}
+```
 
-## Notes
+## Dependencies
 
-This hybrid approach is a pragmatic solution that:
-- Solves the immediate performance problem
-- Maintains compatibility with existing code
-- Uses the right tool for each job
-- Is maintainable and well-documented
+Add the required dependency using cargo:
 
-The research clearly shows this is not a "hack" but rather a recognized pattern when dealing with libgit2's performance limitations in large repositories.
+```bash
+cargo add tracing-appender
+```
+
+## Testing Strategy
+
+1. **Unit tests**: Test log parsing and line counting logic
+2. **Integration tests**: Test log following with simulated file writes
+3. **Container tests**: Test full daemon logging and reading flow
+
+## Benefits of This Approach
+
+1. **Minimal dependencies**: Only adds `tracing-appender` for rotation
+2. **Simple and reliable**: Polling is straightforward and works everywhere  
+3. **Efficient**: 250ms polling interval is responsive without being wasteful
+4. **Handles rotation**: Detects file truncation and reopens
+5. **Already async**: Uses tokio which we already have
+6. **Familiar UX**: Works like `docker logs` or `tail -f`
+
+## Coding Standards Reference
+
+This implementation should follow the project's coding standards:
+- See [docs/style.md](docs/style.md) for Rust coding standards
+- See [docs/testing.md](docs/testing.md) for testing guidelines
+
+## Future Enhancements
+
+- Add `--since` option to filter by timestamp
+- Support JSON output format for structured logging
+- Add log level filtering
+- Implement log compression for old files
