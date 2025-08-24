@@ -66,6 +66,10 @@ struct WatcherState {
     repo_root: PathBuf,
     tracked_ignores: HashSet<PathBuf>,
     binary_update_requested: Arc<AtomicBool>,
+    // Whether to run a final snapshot after the watcher stops
+    final_snapshot_on_exit: Arc<AtomicBool>,
+    // Whether to exec immediately after stopping (e.g., ignore file updates)
+    reload_requested: Arc<AtomicBool>,
     binary_update_tx: Sender<bool>,
     original_binary_metadata: Option<std::fs::Metadata>,
     snapshot_in_progress: Arc<AtomicBool>,
@@ -91,6 +95,8 @@ async fn run_watcher(repo_root: PathBuf, debounce_ms: u64) -> Result<()> {
     // State shared with handler
     let (binary_update_tx, binary_update_rx) = std::sync::mpsc::channel::<bool>();
     let binary_update_requested = Arc::new(AtomicBool::new(false));
+    let final_snapshot_on_exit = Arc::new(AtomicBool::new(false));
+    let reload_requested = Arc::new(AtomicBool::new(false));
     let snapshot_in_progress = Arc::new(AtomicBool::new(false));
 
     // Capture original binary metadata at startup for hot-reload detection
@@ -102,6 +108,8 @@ async fn run_watcher(repo_root: PathBuf, debounce_ms: u64) -> Result<()> {
         repo_root: repo_root.clone(),
         tracked_ignores: tracked_ignore_files,
         binary_update_requested: binary_update_requested.clone(),
+        final_snapshot_on_exit: final_snapshot_on_exit.clone(),
+        reload_requested: reload_requested.clone(),
         binary_update_tx,
         original_binary_metadata,
         snapshot_in_progress,
@@ -151,7 +159,25 @@ async fn run_watcher(repo_root: PathBuf, debounce_ms: u64) -> Result<()> {
         Err(e) => Err(anyhow!("watchexec task join error: {e}")),
     };
 
+    // Perform any requested final actions outside the watchexec action callback
+    // to avoid blocking the internal event channel.
+    if final_snapshot_on_exit.load(Ordering::SeqCst) {
+        if let Err(e) = gitlayer::snapshot_once(&repo_root, None) {
+            error!(error = ?e, "final snapshot failed");
+        } else {
+            info!("final snapshot created");
+        }
+    }
+
+    // If a binary update was requested, wait for the new binary and exec.
     await_binary_update_and_maybe_exec(&binary_update_requested, &binary_update_rx);
+
+    // If a simple reload was requested (e.g., ignore files changed), exec now.
+    if reload_requested.load(Ordering::SeqCst) {
+        info!("reloading after ignore file change");
+        perform_exec();
+        warn!("exec failed after ignore reload, exiting normally");
+    }
 
     result
 }
@@ -193,15 +219,10 @@ fn handle_ignore_file_updates(paths: &[(&Path, Option<&FileType>)], state: &Watc
     for (path, _file_type) in paths {
         if state.tracked_ignores.contains(*path) {
             info!("detected change to tracked ignore file: {}", path.display());
-
-            // Final snapshot before restart
-            if let Err(e) = gitlayer::snapshot_once(&state.repo_root, None) {
-                error!(error = ?e, "pre-restart snapshot failed");
-            }
-
-            // Immediate exec to reload with fresh filters
-            perform_exec();
-            return Flow::Quit;
+            // Defer heavy work: final snapshot and exec after we stop the watcher loop.
+            state.final_snapshot_on_exit.store(true, Ordering::SeqCst);
+            state.reload_requested.store(true, Ordering::SeqCst);
+            return Flow::Quit; // cause wx to stop; we'll exec after it returns
         }
     }
     Flow::Continue
@@ -213,13 +234,11 @@ fn handle_signals(signals: &[watchexec_signals::Signal], state: &WatcherState) -
         match signal {
             // SIGTERM, SIGINT: Graceful shutdown with final snapshot
             Signal::Terminate | Signal::Interrupt => {
-                info!("received shutdown signal");
-                if let Err(e) = gitlayer::snapshot_once(&state.repo_root, None) {
-                    error!(error = ?e, "final snapshot failed");
-                } else {
-                    info!("final snapshot created");
-                }
-                return Flow::Quit;
+                info!("received shutdown signal; scheduling final snapshot");
+                // Defer final snapshot until after wx has stopped to avoid blocking the
+                // watchexec action channel. This prevents channel-full errors.
+                state.final_snapshot_on_exit.store(true, Ordering::SeqCst);
+                return Flow::Quit; // stop wx; outer scope will run snapshot
             }
             // SIGHUP: Reload (for future config reload implementation)
             Signal::Hangup => {
@@ -251,7 +270,9 @@ fn handle_signals(signals: &[watchexec_signals::Signal], state: &WatcherState) -
             }
             // SIGUSR2: Prepare for binary replacement (exec new binary)
             Signal::User2 => {
-                info!("received SIGUSR2 - preparing for binary update");
+                info!("received SIGUSR2 - scheduling pre-update snapshot and exec");
+                // Defer snapshot and exec outside the action callback,
+                // but start the binary-change poller now.
                 request_binary_update(state);
                 return Flow::Quit;
             }
@@ -292,15 +313,10 @@ fn handle_fs_events(paths: &[(&Path, Option<&FileType>)], state: &WatcherState) 
 }
 
 fn request_binary_update(state: &WatcherState) {
-    // Phase 1: Final snapshot
-    if let Err(e) = gitlayer::snapshot_once(&state.repo_root, None) {
-        error!(error = ?e, "pre-update snapshot failed");
-    } else {
-        info!("pre-update snapshot created");
-    }
+    // Phase 1: Defer final snapshot to after the watcher stops
+    state.final_snapshot_on_exit.store(true, Ordering::SeqCst);
 
-    // Phase 2: Start polling for binary change
-    // Mark that we should wait for an update window on shutdown
+    // Phase 2: Start polling for binary change and mark that we'll exec
     state.binary_update_requested.store(true, Ordering::SeqCst);
     let exe_path = match std::env::current_exe() {
         Ok(p) => p,
