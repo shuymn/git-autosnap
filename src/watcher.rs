@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
-use std::sync::mpsc::{Receiver, Sender};
+use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::time::Duration;
 use tracing::{error, info, warn};
 use watchexec::Watchexec;
@@ -74,7 +74,7 @@ struct WatcherState {
     tracked_ignores: HashSet<PathBuf>,
     // What to do after the watcher stops (snapshot/reload/binary update).
     exit_action: Arc<AtomicU8>,
-    binary_update_tx: Sender<bool>,
+    binary_update_tx: SyncSender<bool>,
     original_binary_metadata: Option<std::fs::Metadata>,
     snapshot_in_progress: Arc<AtomicBool>,
 }
@@ -111,7 +111,7 @@ async fn run_watcher(repo_root: PathBuf, debounce_ms: u64) -> Result<()> {
     );
 
     // State shared with handler
-    let (binary_update_tx, binary_update_rx) = std::sync::mpsc::channel::<bool>();
+    let (binary_update_tx, binary_update_rx) = sync_channel::<bool>(1);
     let exit_action = Arc::new(AtomicU8::new(EXIT_NONE));
     let snapshot_in_progress = Arc::new(AtomicBool::new(false));
 
