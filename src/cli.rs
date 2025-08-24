@@ -119,4 +119,15 @@ pub enum Commands {
         #[arg(value_name = "PATH")]
         paths: Vec<String>,
     },
+
+    /// View watcher logs
+    Logs {
+        /// Follow log output (like tail -f)
+        #[arg(short, long)]
+        follow: bool,
+
+        /// Number of lines to show (default: 100)
+        #[arg(short = 'n', long, default_value = "100")]
+        lines: usize,
+    },
 }

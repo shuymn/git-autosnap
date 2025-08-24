@@ -2,10 +2,12 @@ pub mod cli;
 pub mod config;
 pub mod daemon;
 pub mod gitlayer;
+pub mod logs;
 pub mod process;
 pub mod watcher;
 
 use anyhow::{Context, Result};
+use std::path::Path;
 
 /// Initialize tracing. RUST_LOG (if set) takes precedence.
 /// Otherwise, -v/-vv map to "debug"/"trace".
@@ -27,6 +29,49 @@ pub fn init_tracing(verbosity: u8) -> Result<()> {
         .with(filter_layer)
         .with(fmt_layer)
         .try_init();
+
+    Ok(())
+}
+
+/// Initialize tracing with file logging. RUST_LOG (if set) takes precedence.
+/// Otherwise, -v/-vv map to "debug"/"trace".
+pub fn init_tracing_with_file(repo_root: &Path, verbosity: u8, is_daemon: bool) -> Result<()> {
+    use tracing_appender::rolling;
+    use tracing_subscriber::{EnvFilter, fmt, prelude::*};
+
+    let base = match verbosity {
+        0 => "info",
+        1 => "debug",
+        _ => "trace",
+    };
+    let filter = std::env::var("RUST_LOG").unwrap_or_else(|_| base.to_string());
+    let filter_layer = EnvFilter::try_new(filter).context("invalid RUST_LOG / filter")?;
+
+    let log_dir = repo_root.join(".autosnap");
+    let file_appender = rolling::daily(log_dir, "autosnap.log");
+    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+
+    let file_layer = fmt::layer()
+        .with_ansi(false)
+        .with_target(false)
+        .with_writer(non_blocking);
+
+    if is_daemon {
+        // File-only logging for daemon mode
+        let _ = tracing_subscriber::registry()
+            .with(filter_layer)
+            .with(file_layer)
+            .try_init();
+    } else {
+        // Dual logging (file + console) for foreground mode
+        let console_layer = fmt::layer().with_target(false);
+
+        let _ = tracing_subscriber::registry()
+            .with(filter_layer)
+            .with(file_layer)
+            .with(console_layer)
+            .try_init();
+    }
 
     Ok(())
 }
@@ -147,6 +192,13 @@ pub fn run(cli: cli::Cli) -> Result<()> {
                 format,
                 &paths,
             )?;
+        }
+        Commands::Logs { follow, lines } => {
+            let repo_root = gitlayer::repo_root()?;
+
+            // Use tokio runtime for async file operations
+            let rt = tokio::runtime::Runtime::new()?;
+            rt.block_on(logs::show_logs(&repo_root, follow, lines))?;
         }
     }
     Ok(())
