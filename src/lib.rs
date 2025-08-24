@@ -8,6 +8,10 @@ pub mod watcher;
 
 use anyhow::{Context, Result};
 use std::path::Path;
+use std::sync::OnceLock;
+
+// Global guard to keep the file appender alive
+static FILE_APPENDER_GUARD: OnceLock<tracing_appender::non_blocking::WorkerGuard> = OnceLock::new();
 
 /// Initialize tracing. RUST_LOG (if set) takes precedence.
 /// Otherwise, -v/-vv map to "debug"/"trace".
@@ -49,7 +53,10 @@ pub fn init_tracing_with_file(repo_root: &Path, verbosity: u8, is_daemon: bool) 
 
     let log_dir = repo_root.join(".autosnap");
     let file_appender = rolling::daily(log_dir, "autosnap.log");
-    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+    let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
+
+    // Store the guard globally to keep it alive for the program duration
+    FILE_APPENDER_GUARD.set(guard).ok();
 
     let file_layer = fmt::layer()
         .with_ansi(false)

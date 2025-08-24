@@ -1,6 +1,5 @@
 use crate::config::AutosnapConfig;
 use crate::gitlayer;
-use crate::init_tracing_with_file;
 use crate::process;
 use anyhow::{Context, Result, anyhow};
 use std::collections::HashSet;
@@ -51,9 +50,6 @@ fn perform_exec() {
 /// - The watchexec action callback remains non-blocking; heavy work (snapshots, exec)
 ///   is deferred and performed after the watcher stops to avoid internal backpressure.
 pub fn start_foreground(repo_root: &Path, cfg: &AutosnapConfig) -> Result<()> {
-    // Initialize tracing with file logging
-    init_tracing_with_file(repo_root, 0, false)?;
-
     // ensure exists; ignore if already present
     gitlayer::init_autosnap(repo_root).ok();
     // Acquire single-instance lock and write pid

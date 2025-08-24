@@ -1,5 +1,4 @@
 use crate::config::AutosnapConfig;
-use crate::init_tracing_with_file;
 use crate::process::{pid_file, status};
 use anyhow::{Context, Result};
 use libc;
@@ -17,9 +16,6 @@ pub fn start_daemon(repo_root: &Path, _cfg: &AutosnapConfig) -> Result<()> {
         println!("already running");
         return Ok(());
     }
-
-    // Initialize tracing with file-only logging for daemon
-    init_tracing_with_file(repo_root, 0, true)?;
 
     // Spawn a detached child running `start` (foreground) with stdio to /dev/null and new session
     let exe = std::env::current_exe().context("failed to get current executable")?;
