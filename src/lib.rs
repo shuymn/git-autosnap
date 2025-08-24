@@ -119,7 +119,9 @@ pub fn run(cli: cli::Cli) -> Result<()> {
         }
         Commands::Once { message } => {
             let root = gitlayer::repo_root()?;
-            gitlayer::snapshot_once(&root, message.as_deref())?;
+            if let Some(hash) = gitlayer::snapshot_once(&root, message.as_deref())? {
+                println!("{}", hash);
+            }
         }
         Commands::Gc { days, prune } => {
             let root = gitlayer::repo_root()?;

@@ -222,10 +222,20 @@ fn finalize_exit_actions(
     let action = load_exit_action(exit_action);
 
     if (action as u8) >= (ExitAction::Snapshot as u8) {
-        if let Err(e) = gitlayer::snapshot_once(repo_root, None) {
-            error!(error = ?e, event = "snapshot_failed", "final snapshot failed");
-        } else {
-            info!(event = "snapshot_created", "final snapshot created");
+        match gitlayer::snapshot_once(repo_root, None) {
+            Ok(Some(hash)) => {
+                info!(
+                    hash = hash,
+                    event = "snapshot_created",
+                    "final snapshot created"
+                );
+            }
+            Ok(None) => {
+                info!(event = "snapshot_skipped", "no changes to snapshot");
+            }
+            Err(e) => {
+                error!(error = ?e, event = "snapshot_failed", "final snapshot failed");
+            }
         }
     }
 
@@ -322,10 +332,20 @@ fn handle_signals(signals: &[watchexec_signals::Signal], state: &WatcherState) -
                     let root = state.repo_root.clone();
                     let in_progress = state.snapshot_in_progress.clone();
                     tokio::task::spawn_blocking(move || {
-                        if let Err(e) = gitlayer::snapshot_once(&root, None) {
-                            error!(error = ?e, event = "snapshot_failed", "forced snapshot failed");
-                        } else {
-                            info!(event = "snapshot_created", "forced snapshot created");
+                        match gitlayer::snapshot_once(&root, None) {
+                            Ok(Some(hash)) => {
+                                info!(
+                                    hash = hash,
+                                    event = "snapshot_created",
+                                    "forced snapshot created"
+                                );
+                            }
+                            Ok(None) => {
+                                info!(event = "snapshot_skipped", "no changes to snapshot");
+                            }
+                            Err(e) => {
+                                error!(error = ?e, event = "snapshot_failed", "forced snapshot failed");
+                            }
                         }
                         in_progress.store(false, Ordering::SeqCst);
                     });
@@ -366,10 +386,16 @@ fn handle_fs_events(paths: &[(&Path, Option<&FileType>)], state: &WatcherState) 
             let root = state.repo_root.clone();
             let in_progress = state.snapshot_in_progress.clone();
             tokio::task::spawn_blocking(move || {
-                if let Err(e) = gitlayer::snapshot_once(&root, None) {
-                    error!(error = ?e, event = "snapshot_failed", "snapshot failed");
-                } else {
-                    info!(event = "snapshot_created", "snapshot created");
+                match gitlayer::snapshot_once(&root, None) {
+                    Ok(Some(hash)) => {
+                        info!(hash = hash, event = "snapshot_created", "snapshot created");
+                    }
+                    Ok(None) => {
+                        info!(event = "snapshot_skipped", "no changes to snapshot");
+                    }
+                    Err(e) => {
+                        error!(error = ?e, event = "snapshot_failed", "snapshot failed");
+                    }
                 }
                 // Always clear the flag when done
                 in_progress.store(false, Ordering::SeqCst);

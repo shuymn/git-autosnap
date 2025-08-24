@@ -98,7 +98,8 @@ fn add_to_git_exclude(repo_root: &Path) -> Result<()> {
 }
 
 /// Take a single snapshot of the working tree and commit it into `.autosnap`.
-pub fn snapshot_once(repo_root: &Path, message: Option<&str>) -> Result<()> {
+/// Returns the short hash of the created commit, or None if no changes were made.
+pub fn snapshot_once(repo_root: &Path, message: Option<&str>) -> Result<Option<String>> {
     let autosnap = autosnap_dir(repo_root);
     if !autosnap.exists() {
         bail!(".autosnap is missing; run `git autosnap init` first")
@@ -124,7 +125,7 @@ pub fn snapshot_once(repo_root: &Path, message: Option<&str>) -> Result<()> {
         && prev_tree.id() == tree.id()
     {
         // No changes; do not create a new commit
-        return Ok(());
+        return Ok(None);
     }
 
     // Create author/committer signature from main repo config
@@ -160,14 +161,15 @@ pub fn snapshot_once(repo_root: &Path, message: Option<&str>) -> Result<()> {
         .commit(Some("HEAD"), &sig, &sig, &msg, &tree, &parent_refs)
         .context("failed to create autosnap commit")?;
 
-    // Print short id for script-friendliness per implementation plan
+    // Return short id for script-friendliness per implementation plan
     if let Ok(short) = repo.find_object(oid, None).and_then(|o| o.short_id())
         && let Some(s) = short.as_str()
     {
-        println!("{}", s);
+        Ok(Some(s.to_string()))
+    } else {
+        // Fallback to full oid if short id fails
+        Ok(Some(oid.to_string()))
     }
-
-    Ok(())
 }
 
 // Determine if a git2 error is likely a transient filesystem race
