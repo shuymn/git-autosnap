@@ -8,10 +8,25 @@ pub mod watcher;
 
 use anyhow::{Context, Result};
 use std::path::Path;
-use std::sync::OnceLock;
+use std::sync::Mutex;
 
 // Global guard to keep the file appender alive
-static FILE_APPENDER_GUARD: OnceLock<tracing_appender::non_blocking::WorkerGuard> = OnceLock::new();
+static FILE_APPENDER_GUARD: Mutex<Option<tracing_appender::non_blocking::WorkerGuard>> =
+    Mutex::new(None);
+
+/// Flush and close the log file appender.
+/// This should be called before exec to ensure all buffered logs are written.
+pub fn flush_logs() {
+    // Taking the guard will drop it, which flushes pending logs
+    if let Ok(mut guard_holder) = FILE_APPENDER_GUARD.lock()
+        && let Some(guard) = guard_holder.take()
+    {
+        // Explicitly drop to ensure flush happens before continuing
+        drop(guard);
+        // Give the filesystem a moment to complete the write
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
 
 /// Initialize tracing. RUST_LOG (if set) takes precedence.
 /// Otherwise, -v/-vv map to "debug"/"trace".
@@ -56,7 +71,9 @@ pub fn init_tracing_with_file(repo_root: &Path, verbosity: u8, is_daemon: bool) 
     let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
 
     // Store the guard globally to keep it alive for the program duration
-    FILE_APPENDER_GUARD.set(guard).ok();
+    if let Ok(mut guard_holder) = FILE_APPENDER_GUARD.lock() {
+        *guard_holder = Some(guard);
+    }
 
     let file_layer = fmt::layer()
         .with_ansi(false)

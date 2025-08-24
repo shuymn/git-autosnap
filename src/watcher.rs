@@ -1,4 +1,5 @@
 use crate::config::AutosnapConfig;
+use crate::flush_logs;
 use crate::gitlayer;
 use crate::process;
 use anyhow::{Context, Result, anyhow};
@@ -26,6 +27,9 @@ fn perform_exec() {
 
     let args: Vec<String> = std::env::args().collect();
     info!("re-executing {} with args {:?}", exe.display(), &args[1..]);
+
+    // Flush logs before exec to ensure all buffered messages are written
+    flush_logs();
 
     #[cfg(unix)]
     {
