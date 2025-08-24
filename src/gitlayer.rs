@@ -188,57 +188,93 @@ fn build_index(repo: &Repository) -> Result<()> {
         .context("repository has no working directory")?;
 
     // Try optimized path first, fall back to standard approach
-    if let Some(files) = discover_files(work_tree)? {
-        update_index_from_file_list(repo, files)
+    if let Some(discovered) = discover_files(repo, work_tree)? {
+        update_index_from_discovery(repo, discovered)
     } else {
         update_index_standard(repo)
     }
 }
 
-// Discover files in the working tree using git ls-files for performance
-// Returns None if git ls-files is not available
-fn discover_files(work_tree: &Path) -> Result<Option<Vec<String>>> {
-    let git_dir = work_tree.join(".git");
-    if !git_dir.exists() {
+// Structure to hold discovered files and optimization hints
+struct DiscoveredFiles {
+    files: Vec<String>,
+    // Track which paths are in the index for optimized stale detection
+    indexed_paths: std::collections::HashSet<String>,
+}
+
+// Discover files in the working tree (equivalent to: git ls-files -z --cached --others --exclude-standard)
+fn discover_files(repo: &Repository, work_tree: &Path) -> Result<Option<DiscoveredFiles>> {
+    // Verify that the repository exists
+    if !work_tree.join(".git").exists() {
         return Ok(None);
     }
 
-    let output = Command::new("git")
-        .current_dir(work_tree)
-        .args([
-            "ls-files",
-            "-z",                 // Null-terminated
-            "--cached",           // Tracked files
-            "--others",           // Untracked files
-            "--exclude-standard", // Respect .gitignore
-        ])
-        .output()
-        .context("failed to run git ls-files")?;
-
-    if !output.status.success() {
+    // This function requires a working tree to discover files
+    // - For the main repo: always has a working tree
+    // - For .autosnap repo: temporarily gets a workdir set during diff/restore operations
+    if repo.is_bare() {
         return Ok(None);
     }
 
-    let mut files = Vec::new();
-    if !output.stdout.is_empty() {
-        for file_bytes in output.stdout.split(|&b| b == 0).filter(|s| !s.is_empty()) {
-            let file_path =
-                std::str::from_utf8(file_bytes).context("invalid UTF-8 in file path")?;
+    // Use BTreeSet to maintain lexicographic order and avoid duplicates
+    let mut all_paths = std::collections::BTreeSet::new();
+    let mut indexed_paths = std::collections::HashSet::new();
+
+    // --cached: list all paths that are in the index
+    let index = repo.index().context("failed to get index")?;
+    for i in 0..index.len() {
+        if let Some(entry) = index.get(i) {
+            // Convert path bytes to string
+            let path_str =
+                std::str::from_utf8(&entry.path).context("invalid UTF-8 in index entry path")?;
 
             // Skip internal git directories
-            if should_skip_path(file_path) {
-                continue;
+            if !should_skip_path(path_str) {
+                all_paths.insert(path_str.to_string());
+                indexed_paths.insert(path_str.to_string());
             }
-
-            files.push(file_path.to_string());
         }
     }
 
-    Ok(Some(files))
+    // --others --exclude-standard: list untracked files respecting .gitignore
+    let mut opts = git2::StatusOptions::new();
+    opts.include_untracked(true)
+        .recurse_untracked_dirs(true)
+        .exclude_submodules(true) // Exclude submodule contents (default behavior of ls-files)
+        .no_refresh(true); // Skip index refresh for performance on single run
+
+    let statuses = repo
+        .statuses(Some(&mut opts))
+        .context("failed to get repository status")?;
+
+    for status_entry in statuses.iter() {
+        // Check if file is untracked (WT_NEW)
+        if status_entry.status().contains(git2::Status::WT_NEW) {
+            // Get path - prefer path() which returns &str, fallback to path_bytes()
+            let path_str = if let Some(path) = status_entry.path() {
+                path
+            } else {
+                // path_bytes() returns &[u8], not Option
+                let path_bytes = status_entry.path_bytes();
+                std::str::from_utf8(path_bytes).context("invalid UTF-8 in status entry path")?
+            };
+
+            // Skip internal git directories
+            if !should_skip_path(path_str) {
+                all_paths.insert(path_str.to_string());
+            }
+        }
+    }
+
+    // Convert BTreeSet to Vec (already sorted)
+    Ok(Some(DiscoveredFiles {
+        files: all_paths.into_iter().collect(),
+        indexed_paths,
+    }))
 }
 
-// Update index using a pre-discovered file list
-fn update_index_from_file_list(repo: &Repository, files: Vec<String>) -> Result<()> {
+// Update index using pre-discovered file list
+fn update_index_from_discovery(repo: &Repository, discovered: DiscoveredFiles) -> Result<()> {
     let mut index = repo.index().context("failed to get index")?;
 
     // Update tracked files first (uses stat cache)
@@ -246,11 +282,13 @@ fn update_index_from_file_list(repo: &Repository, files: Vec<String>) -> Result<
         .update_all(["."].iter(), None)
         .context("failed to update tracked files")?;
 
-    // Remove stale entries
-    remove_stale_entries(&mut index, &files)?;
+    // Remove stale entries - only check if we have indexed files
+    if !discovered.indexed_paths.is_empty() {
+        remove_stale_entries(&mut index, &discovered.files, &discovered.indexed_paths)?;
+    }
 
     // Add new files
-    for file_path in files {
+    for file_path in discovered.files {
         let _ = index.add_path(Path::new(&file_path));
     }
 
@@ -258,18 +296,20 @@ fn update_index_from_file_list(repo: &Repository, files: Vec<String>) -> Result<
     Ok(())
 }
 
-// Remove index entries for files that no longer exist
-fn remove_stale_entries(index: &mut git2::Index, current_files: &[String]) -> Result<()> {
-    let files_set: std::collections::HashSet<&str> =
+// Remove stale entries using pre-collected index information
+fn remove_stale_entries(
+    index: &mut git2::Index,
+    current_files: &[String],
+    indexed_paths: &std::collections::HashSet<String>,
+) -> Result<()> {
+    let current_set: std::collections::HashSet<&str> =
         current_files.iter().map(|s| s.as_str()).collect();
 
+    // Only check the paths we know are in the index
     let mut to_remove = Vec::new();
-    for i in 0..index.len() {
-        if let Some(entry) = index.get(i)
-            && let Ok(path_str) = std::str::from_utf8(&entry.path)
-            && !files_set.contains(path_str)
-        {
-            to_remove.push(path_str.to_string());
+    for indexed_path in indexed_paths {
+        if !current_set.contains(indexed_path.as_str()) {
+            to_remove.push(indexed_path.clone());
         }
     }
 
