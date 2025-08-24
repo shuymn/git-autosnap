@@ -45,6 +45,10 @@ fn perform_exec() {
 }
 
 /// Start the foreground watcher loop using watchexec with git-aware ignores and debounce.
+///
+/// - Debounce is controlled by `autosnap.debounce-ms` (default 1000ms).
+/// - The watchexec action callback remains non-blocking; heavy work (snapshots, exec)
+///   is deferred and performed after the watcher stops to avoid internal backpressure.
 pub fn start_foreground(repo_root: &Path, cfg: &AutosnapConfig) -> Result<()> {
     // ensure exists; ignore if already present
     gitlayer::init_autosnap(repo_root).ok();
@@ -130,7 +134,7 @@ async fn run_watcher(repo_root: &Path, debounce_ms: u64) -> Result<()> {
     let config = build_watchexec_config(state.clone(), filterer, debounce_ms);
     let wx = Watchexec::with_config(config).context("failed to create watchexec")?;
 
-    info!(path = %repo_root.display(), debounce_ms, "watching");
+    info!(event = "watch_start", path = %repo_root.display(), debounce_ms, "watching");
     let handle = wx.main();
     let result = match handle.await {
         Ok(Ok(())) => Ok(()),
@@ -204,7 +208,7 @@ fn build_watchexec_config(
     config.filterer(filterer);
     config.throttle(Duration::from_millis(debounce_ms));
     config.on_error(|err: watchexec::ErrorHook| {
-        tracing::error!("watchexec error: {}", err.error);
+        tracing::error!(event = "watchexec_error", "watchexec error: {}", err.error);
     });
 
     config
@@ -219,16 +223,16 @@ fn finalize_exit_actions(
 
     if (action as u8) >= (ExitAction::Snapshot as u8) {
         if let Err(e) = gitlayer::snapshot_once(repo_root, None) {
-            error!(error = ?e, "final snapshot failed");
+            error!(error = ?e, event = "snapshot_failed", "final snapshot failed");
         } else {
-            info!("final snapshot created");
+            info!(event = "snapshot_created", "final snapshot created");
         }
     }
 
     if action == ExitAction::BinaryUpdateExec {
         await_binary_update_and_maybe_exec(binary_update_rx);
     } else if action == ExitAction::ReloadExec {
-        info!("reloading after ignore file change");
+        info!(event = "reload_exec", "reloading after ignore file change");
         perform_exec();
         warn!("exec failed after ignore reload, exiting normally");
     }
@@ -270,7 +274,7 @@ async fn build_filterer_and_ignores(
 fn handle_ignore_file_updates(paths: &[(&Path, Option<&FileType>)], state: &WatcherState) -> Flow {
     for (path, _file_type) in paths {
         if state.tracked_ignores.contains(*path) {
-            info!("detected change to tracked ignore file: {}", path.display());
+            info!(event = "ignore_change", file = %path.display(), "detected change to tracked ignore file");
             // Defer heavy work: final snapshot and exec after we stop the watcher loop.
             // Elevate exit action to reload-exec.
             elevate_exit_action(&state.exit_action, ExitAction::ReloadExec);
@@ -286,7 +290,10 @@ fn handle_signals(signals: &[watchexec_signals::Signal], state: &WatcherState) -
         match signal {
             // SIGTERM, SIGINT: Graceful shutdown with final snapshot
             Signal::Terminate | Signal::Interrupt => {
-                info!("received shutdown signal; scheduling final snapshot");
+                info!(
+                    event = "shutdown_signal",
+                    "received shutdown signal; scheduling final snapshot"
+                );
                 // Defer final snapshot until after wx has stopped to avoid blocking the
                 // watchexec action channel. This prevents channel-full errors.
                 elevate_exit_action(&state.exit_action, ExitAction::Snapshot);
@@ -294,12 +301,18 @@ fn handle_signals(signals: &[watchexec_signals::Signal], state: &WatcherState) -
             }
             // SIGHUP: Reload (for future config reload implementation)
             Signal::Hangup => {
-                info!("received SIGHUP - reload signal (not yet implemented)");
+                info!(
+                    event = "reload_signal",
+                    "received SIGHUP - reload signal (not yet implemented)"
+                );
                 // TODO: Reload configuration
             }
             // SIGUSR1: Force immediate snapshot
             Signal::User1 => {
-                info!("received SIGUSR1 - forcing snapshot");
+                info!(
+                    event = "force_snapshot_signal",
+                    "received SIGUSR1 - forcing snapshot"
+                );
                 // Use the same deduplication logic as handle_fs_events
                 if state
                     .snapshot_in_progress
@@ -308,11 +321,11 @@ fn handle_signals(signals: &[watchexec_signals::Signal], state: &WatcherState) -
                 {
                     let root = state.repo_root.clone();
                     let in_progress = state.snapshot_in_progress.clone();
-                    std::thread::spawn(move || {
+                    tokio::task::spawn_blocking(move || {
                         if let Err(e) = gitlayer::snapshot_once(&root, None) {
-                            error!(error = ?e, "forced snapshot failed");
+                            error!(error = ?e, event = "snapshot_failed", "forced snapshot failed");
                         } else {
-                            info!("forced snapshot created");
+                            info!(event = "snapshot_created", "forced snapshot created");
                         }
                         in_progress.store(false, Ordering::SeqCst);
                     });
@@ -322,7 +335,10 @@ fn handle_signals(signals: &[watchexec_signals::Signal], state: &WatcherState) -
             }
             // SIGUSR2: Prepare for binary replacement (exec new binary)
             Signal::User2 => {
-                info!("received SIGUSR2 - scheduling pre-update snapshot and exec");
+                info!(
+                    event = "binary_update_signal",
+                    "received SIGUSR2 - scheduling pre-update snapshot and exec"
+                );
                 // Defer snapshot and exec outside the action callback,
                 // but start the binary-change poller now.
                 request_binary_update(state);
@@ -338,6 +354,7 @@ fn handle_signals(signals: &[watchexec_signals::Signal], state: &WatcherState) -
 
 fn handle_fs_events(paths: &[(&Path, Option<&FileType>)], state: &WatcherState) {
     if !paths.is_empty() {
+        tracing::debug!(event = "fs_events", count = paths.len());
         // Try to acquire the snapshot lock using compare_exchange
         // If false -> true succeeds, we got the lock and can proceed
         // If it fails, another snapshot is already in progress
@@ -348,18 +365,18 @@ fn handle_fs_events(paths: &[(&Path, Option<&FileType>)], state: &WatcherState) 
         {
             let root = state.repo_root.clone();
             let in_progress = state.snapshot_in_progress.clone();
-            std::thread::spawn(move || {
+            tokio::task::spawn_blocking(move || {
                 if let Err(e) = gitlayer::snapshot_once(&root, None) {
-                    error!(error = ?e, "snapshot failed");
+                    error!(error = ?e, event = "snapshot_failed", "snapshot failed");
                 } else {
-                    info!("snapshot created");
+                    info!(event = "snapshot_created", "snapshot created");
                 }
                 // Always clear the flag when done
                 in_progress.store(false, Ordering::SeqCst);
             });
         } else {
             // Another snapshot is already in progress, skip this one
-            tracing::debug!("snapshot already in progress, skipping");
+            tracing::debug!(event = "snapshot_skipped", reason = "in_progress");
         }
     }
 }
@@ -389,7 +406,11 @@ fn request_binary_update(state: &WatcherState) {
     let exe_for_poll = exe_path.clone();
     let tx_for_poll = state.binary_update_tx.clone();
     std::thread::spawn(move || {
-        info!("waiting for binary to change at {}", exe_for_poll.display());
+        info!(
+            event = "binary_update_wait",
+            "waiting for binary to change at {}",
+            exe_for_poll.display()
+        );
 
         for i in 0..30 {
             // 30 * 500ms = 15s max
@@ -404,8 +425,10 @@ fn request_binary_update(state: &WatcherState) {
                     use std::os::unix::fs::MetadataExt;
                     if new_meta.ino() != orig.ino() {
                         info!(
-                            "binary changed (inode), ready to exec after {} ms",
-                            (i + 1) * 500
+                            event = "binary_update_ready",
+                            method = "inode",
+                            delay_ms = (i + 1) * 500,
+                            "binary changed (inode), ready to exec"
                         );
                         let _ = tx_for_poll.send(true);
                         return;
@@ -414,8 +437,10 @@ fn request_binary_update(state: &WatcherState) {
 
                 if new_meta.modified().ok() != orig.modified().ok() {
                     info!(
-                        "binary changed (mtime), ready to exec after {} ms",
-                        (i + 1) * 500
+                        event = "binary_update_ready",
+                        method = "mtime",
+                        delay_ms = (i + 1) * 500,
+                        "binary changed (mtime), ready to exec"
                     );
                     let _ = tx_for_poll.send(true);
                     return;
@@ -423,7 +448,10 @@ fn request_binary_update(state: &WatcherState) {
             }
         }
 
-        warn!("binary unchanged after 15s timeout");
+        warn!(
+            event = "binary_update_timeout",
+            "binary unchanged after 15s timeout"
+        );
         let _ = tx_for_poll.send(false);
     });
 }
@@ -431,12 +459,48 @@ fn request_binary_update(state: &WatcherState) {
 fn await_binary_update_and_maybe_exec(rx: &Receiver<bool>) {
     if let Ok(should_exec) = rx.recv_timeout(Duration::from_secs(16)) {
         if should_exec {
-            info!("binary update detected, performing exec");
+            info!(
+                event = "binary_update_detected",
+                "binary update detected, performing exec"
+            );
             perform_exec();
             // If exec fails, we'll fall through
             warn!("exec failed after SIGUSR2, exiting normally");
         } else {
-            warn!("binary update timeout, exiting without exec");
+            warn!(
+                event = "binary_update_timeout",
+                "binary update timeout, exiting without exec"
+            );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exit_action_elevation_respects_precedence() {
+        let a = Arc::new(AtomicU8::new(ExitAction::None as u8));
+
+        // Elevate from None -> Snapshot
+        elevate_exit_action(&a, ExitAction::Snapshot);
+        assert_eq!(load_exit_action(&a), ExitAction::Snapshot);
+
+        // Attempt to lower -> should remain Snapshot
+        elevate_exit_action(&a, ExitAction::None);
+        assert_eq!(load_exit_action(&a), ExitAction::Snapshot);
+
+        // Elevate to ReloadExec
+        elevate_exit_action(&a, ExitAction::ReloadExec);
+        assert_eq!(load_exit_action(&a), ExitAction::ReloadExec);
+
+        // Elevate to BinaryUpdateExec (highest)
+        elevate_exit_action(&a, ExitAction::BinaryUpdateExec);
+        assert_eq!(load_exit_action(&a), ExitAction::BinaryUpdateExec);
+
+        // Further attempts to lower must be ignored
+        elevate_exit_action(&a, ExitAction::Snapshot);
+        assert_eq!(load_exit_action(&a), ExitAction::BinaryUpdateExec);
     }
 }
