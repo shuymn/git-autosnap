@@ -6,9 +6,16 @@
 - `docs/`: Specs, style, testing strategy. Also `Taskfile.yml`, `lefthook.yml`, and `Dockerfile.test`.
 
 ## Build, Test, and Development Commands
-- Build: `cargo build` (debug), `cargo build --release` (release).
-- Run: `cargo run -- --help`.
-- Task runner: `task build`, `task test-unit`, `task test-container` (requires Docker), `task install` (hot‑reloads daemon via `SIGUSR2`).
+- Prefer Taskfile tasks:
+  - Build: `task build` (debug), `task build-release` (release)
+  - Run: `task run -- ARGS="--help"`
+  - Install: `task install` (hot‑reloads daemon via `SIGUSR2` if running)
+  - Lint/Format: `task fmt`, `task clippy`, `task lint`
+  - Tests: `task test`, `task test-unit`, `task test-container` (Docker required)
+  - Docs: `task docs` (or `task docs-all`)
+  - Clean: `task clean`
+  - Utilities: `task deps`, `task update`, `task coverage`, `task bench`, `task version`
+- Cargo alternatives: `cargo build`, `cargo build --release`, `cargo run -- --help`.
 - Verbose logging: `-v`/`-vv` or `RUST_LOG=git_autosnap=debug`.
 
 ## Coding Style & Naming Conventions
@@ -19,8 +26,8 @@
 - Logging: use `tracing` and control via `RUST_LOG` or `-v/-vv`.
 
 ## Testing Guidelines
-- Fast suite: `cargo test`.
-- Container tests: `cargo test --features container-tests` or `task test-container`; use `tests/support/` helpers.
+- Fast suite: `task test` (or `task test-unit`).
+- Container tests: `task test-container` (or `cargo test --features container-tests`); use `tests/support/` helpers.
 - Keep tests isolated; prefer temp dirs or containers; do not touch host state.
 
 ## Commit & Pull Request Guidelines
@@ -31,4 +38,3 @@
 - Local bare repo at `.autosnap/`; main history untouched; honors `.gitignore`.
 - Config via git: `git config autosnap.debounce-ms 1000`, `git config autosnap.gc.prune-days 60`.
 - Daemon PID: `.autosnap/autosnap.pid`; signals: `SIGTERM`/`SIGINT` (graceful), `SIGUSR1` (snapshot), `SIGUSR2` (hot‑reload). Example: `kill -USR1 $(cat .autosnap/autosnap.pid)`.
-
