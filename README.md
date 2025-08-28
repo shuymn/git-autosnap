@@ -131,6 +131,10 @@ task test-container # container tests (requires Docker)
 - Integration tests favor containers for isolation (see `docs/testing.md`).
 - Tests must not touch host Git state or global configs.
 
+## Disclaimer
+
+git-autosnap reduces risk by keeping local snapshots, but it does not guarantee prevention of data loss or corruption. Use at your own discretion, keep regular backups, and verify restores. The authors and contributors are not responsible for any loss or damage resulting from use of this software or from defects.
+
 ## License
 
 MIT © 2025 Shu YAMANI (see `LICENSE`).
