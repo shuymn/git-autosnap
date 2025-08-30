@@ -29,7 +29,7 @@ pub fn dispatch(cli: Cli) -> Result<()> {
     match &cli.command {
         Commands::Once { message } => {
             let cmd = once::OnceCommand {
-                message: message.clone(),
+                message: message.as_deref(),
             };
             cmd.run(&ctx)
         }
@@ -60,7 +60,7 @@ pub fn dispatch(cli: Cli) -> Result<()> {
             interactive,
         } => {
             let cmd = shell::ShellCommand {
-                commit: commit.clone(),
+                commit: commit.as_deref(),
                 interactive: *interactive,
             };
             cmd.run(&ctx)
@@ -74,12 +74,12 @@ pub fn dispatch(cli: Cli) -> Result<()> {
             paths,
         } => {
             let cmd = restore::RestoreCommand {
-                commit: commit.clone(),
+                commit: commit.as_deref(),
                 interactive: *interactive,
                 force: *force,
                 dry_run: *dry_run,
                 full: *full,
-                paths: paths.clone(),
+                paths,
             };
             cmd.run(&ctx)
         }
@@ -93,13 +93,13 @@ pub fn dispatch(cli: Cli) -> Result<()> {
             paths,
         } => {
             let cmd = diff::DiffCommand {
-                commit1: commit1.clone(),
-                commit2: commit2.clone(),
+                commit1: commit1.as_deref(),
+                commit2: commit2.as_deref(),
                 interactive: *interactive,
                 stat: *stat,
                 name_only: *name_only,
                 name_status: *name_status,
-                paths: paths.clone(),
+                paths,
             };
             cmd.run(&ctx)
         } // All commands are handled explicitly above

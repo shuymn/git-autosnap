@@ -135,15 +135,15 @@ fn remove_stale_entries(
         current_files.iter().map(|s| s.as_str()).collect();
 
     // Only check the paths we know are in the index
-    let mut to_remove = Vec::new();
+    let mut to_remove: Vec<&str> = Vec::new();
     for indexed_path in indexed_paths {
         if !current_set.contains(indexed_path.as_str()) {
-            to_remove.push(indexed_path.clone());
+            to_remove.push(indexed_path.as_str());
         }
     }
 
     for path in to_remove {
-        index.remove_path(Path::new(&path))?;
+        index.remove_path(Path::new(path))?;
     }
 
     Ok(())
