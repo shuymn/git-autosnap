@@ -1,10 +1,10 @@
-# syntax=docker/dockerfile:1.6
+# syntax=docker/dockerfile:1.6@sha256:ac85f380a63b13dfcefa89046420e1781752bab202122f8f50032edf31be0021
 
 # Test image for container-based integration tests (feature: container-tests)
 # - Contains: git, bash, libgit2 runtime, and the git-autosnap binary in PATH
 # - Tag this image as: git-autosnap-test:latest
 
-FROM rust:1-bullseye AS builder
+FROM rust:1-bullseye@sha256:5b0defc2e3b26c97c917406f3d7c682028f87b2ae9adee184694b5c0279e2740 AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
@@ -24,7 +24,7 @@ COPY . .
 RUN cargo install --path . --locked
 
 # Final test image — keep toolchain to avoid runtime lib mismatches and ease debugging
-FROM rust:1-bullseye
+FROM rust:1-bullseye@sha256:5b0defc2e3b26c97c917406f3d7c682028f87b2ae9adee184694b5c0279e2740
 ENV DEBIAN_FRONTEND=noninteractive
 RUN set -eux; \
     apt-get update; \
