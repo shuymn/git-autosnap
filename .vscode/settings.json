@@ -1,5 +1,8 @@
 {
   "rust-analyzer.cargo.features": [
     "container-tests"
-  ]
+  ],
+  "rust-analyzer.rustfmt.extraArgs": [
+    "+nightly"
+  ],
 }

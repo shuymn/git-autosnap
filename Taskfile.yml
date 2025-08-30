@@ -96,12 +96,12 @@ tasks:
   fmt:
     desc: Format code with cargo fmt
     cmds:
-      - cargo fmt --all
+      - cargo +nightly fmt --all
 
   fmt-check:
     desc: Check code formatting
     cmds:
-      - cargo fmt --all --check
+      - cargo +nightly fmt --all --check
 
   clippy:
     desc: Run clippy linter
