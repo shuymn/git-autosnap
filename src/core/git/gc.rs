@@ -1,6 +1,6 @@
-use anyhow::Result;
-use std::path::Path;
-use std::process::Command;
+use std::{path::Path, process::Command};
+
+use anyhow::{Context, Result};
 
 use super::repo::autosnap_dir;
 
@@ -9,8 +9,6 @@ use super::repo::autosnap_dir;
 /// When `prune` is false, only compresses/packs objects without removing any snapshots.
 /// When `prune` is true with `prune_days` set, removes snapshots older than the specified days.
 pub fn gc(repo_root: &Path, prune: bool, prune_days: Option<u32>) -> Result<()> {
-    use anyhow::Context;
-
     let autosnap = autosnap_dir(repo_root);
     if !autosnap.exists() {
         return Ok(()); // nothing to do

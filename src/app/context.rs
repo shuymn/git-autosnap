@@ -1,6 +1,8 @@
-use crate::config::AutosnapConfig;
-use anyhow::Result;
 use std::path::PathBuf;
+
+use anyhow::Result;
+
+use crate::config::AutosnapConfig;
 
 #[derive(Debug, Clone)]
 pub struct AppContext {

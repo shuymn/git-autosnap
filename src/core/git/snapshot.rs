@@ -1,9 +1,9 @@
-use anyhow::{Context, Result, bail};
-use git2::{Commit, Repository, Signature, Tree};
 use std::path::Path;
 
-use super::index::write_tree_with_retries;
-use super::repo::autosnap_dir;
+use anyhow::{Context, Result, bail};
+use git2::{Commit, Repository, Signature, Tree};
+
+use super::{index::write_tree_with_retries, repo::autosnap_dir};
 
 /// Take a single snapshot of the working tree and commit it into `.autosnap`.
 /// Returns the short hash of the created commit, or None if no changes were made.

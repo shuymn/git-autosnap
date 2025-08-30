@@ -1,6 +1,7 @@
+use std::path::Path;
+
 use anyhow::{Context, Result};
 use git2::Repository;
-use std::path::Path;
 
 /// Autosnap configuration values sourced from git config.
 #[derive(Debug, Clone, Copy)]

@@ -1,10 +1,9 @@
+use std::{fs, path::Path};
+
 use anyhow::{Context, Result, bail};
 use git2::Repository;
-use std::fs;
-use std::path::Path;
 
-use super::repo::autosnap_dir;
-use super::shell::select_commit_interactive;
+use super::{repo::autosnap_dir, shell::select_commit_interactive};
 
 /// Restore files from a snapshot to the working tree.
 pub fn restore(

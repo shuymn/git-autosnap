@@ -1,6 +1,6 @@
+use std::{path::Path, sync::Mutex};
+
 use anyhow::{Context, Result};
-use std::path::Path;
-use std::sync::Mutex;
 
 // Global guard to keep the file appender alive
 static FILE_APPENDER_GUARD: Mutex<Option<tracing_appender::non_blocking::WorkerGuard>> =

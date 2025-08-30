@@ -1,7 +1,9 @@
 use anyhow::Result;
 
-use crate::app::context::AppContext;
-use crate::cli::{Cli, Commands};
+use crate::{
+    app::context::AppContext,
+    cli::{Cli, Commands},
+};
 
 pub mod diff;
 pub mod gc;

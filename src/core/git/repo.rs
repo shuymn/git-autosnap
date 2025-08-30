@@ -1,8 +1,11 @@
+use std::{
+    fs::{self, OpenOptions},
+    io::{BufRead, BufReader, Write},
+    path::{Path, PathBuf},
+};
+
 use anyhow::{Context, Result};
 use git2::Repository;
-use std::fs::{self, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
-use std::path::{Path, PathBuf};
 
 /// Discover the current repository root directory.
 pub fn repo_root() -> Result<PathBuf> {

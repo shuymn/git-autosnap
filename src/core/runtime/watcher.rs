@@ -1,18 +1,25 @@
-use crate::config::AutosnapConfig;
-use crate::core::git;
-use crate::core::runtime::process;
-use crate::logging::init::flush_logs;
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicU8, Ordering},
+        mpsc::{Receiver, SyncSender, sync_channel},
+    },
+    time::Duration,
+};
+
 use anyhow::{Context, Result, anyhow};
-use std::collections::HashSet;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
-use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
-use std::time::Duration;
 use tracing::{error, info, warn};
 use watchexec::Watchexec;
 use watchexec_events::FileType;
 use watchexec_filterer_ignore::IgnoreFilterer;
+
+use crate::{
+    config::AutosnapConfig,
+    core::{git, runtime::process},
+    logging::init::flush_logs,
+};
 
 /// Perform exec to restart the process with the same arguments.
 /// This replaces the current process with a new instance.

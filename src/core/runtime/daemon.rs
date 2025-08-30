@@ -1,13 +1,21 @@
-use crate::config::AutosnapConfig;
-use crate::core::runtime::process::{pid_file, status};
+use std::{
+    fs,
+    os::unix::process::CommandExt,
+    path::Path,
+    process::{Command, Stdio},
+};
+
 use anyhow::{Context, Result};
 use libc;
-use nix::sys::signal::{self, Signal};
-use nix::unistd::Pid;
-use std::fs;
-use std::os::unix::process::CommandExt;
-use std::path::Path;
-use std::process::{Command, Stdio};
+use nix::{
+    sys::signal::{self, Signal},
+    unistd::Pid,
+};
+
+use crate::{
+    config::AutosnapConfig,
+    core::runtime::process::{pid_file, status},
+};
 
 /// Start the watcher in background (daemonize). Placeholder.
 pub fn start_daemon(repo_root: &Path, _cfg: &AutosnapConfig) -> Result<()> {

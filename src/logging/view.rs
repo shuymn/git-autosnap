@@ -1,10 +1,15 @@
+use std::{
+    collections::VecDeque,
+    io::SeekFrom,
+    path::{Path, PathBuf},
+};
+
 use anyhow::Result;
-use std::collections::VecDeque;
-use std::io::SeekFrom;
-use std::path::{Path, PathBuf};
-use tokio::fs::File;
-use tokio::io::{AsyncBufReadExt, AsyncSeekExt, BufReader};
-use tokio::time::{Duration, interval};
+use tokio::{
+    fs::File,
+    io::{AsyncBufReadExt, AsyncSeekExt, BufReader},
+    time::{Duration, interval},
+};
 
 pub async fn show_logs(repo_root: &Path, follow: bool, lines: usize) -> Result<()> {
     let log_dir = repo_root.join(".autosnap");

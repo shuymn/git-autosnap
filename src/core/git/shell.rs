@@ -1,10 +1,15 @@
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    process::{Command, Stdio},
+};
+
 use anyhow::{Context, Result, bail};
-use git2::{Repository, Tree};
-use skim::Skim;
-use skim::prelude::{SkimItemReader, SkimOptionsBuilder};
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use git2::{ObjectType, Repository, Tree, TreeWalkMode, TreeWalkResult};
+use skim::{
+    Skim,
+    prelude::{SkimItemReader, SkimOptionsBuilder},
+};
 
 use super::repo::autosnap_dir;
 
@@ -87,8 +92,6 @@ pub fn snapshot_shell(repo_root: &Path, commit: Option<&str>, interactive: bool)
 
 /// Helper function to extract a git tree to a filesystem path
 fn extract_tree_to_path(repo: &Repository, tree: &Tree, base_path: &Path) -> Result<()> {
-    use git2::{ObjectType, TreeWalkMode, TreeWalkResult};
-
     tree.walk(TreeWalkMode::PreOrder, |root, entry| {
         let entry_path = if root.is_empty() {
             PathBuf::from(entry.name().unwrap_or(""))

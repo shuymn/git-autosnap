@@ -1,9 +1,12 @@
+use std::{
+    fs::{self, File, OpenOptions},
+    io::{Read, Write},
+    os::unix::fs::PermissionsExt,
+    path::{Path, PathBuf},
+};
+
 use anyhow::{Context, Result, anyhow};
 use fs2::FileExt;
-use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Write};
-use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
 
 /// Path to the PID file inside `.autosnap`.
 pub fn pid_file(repo_root: &Path) -> PathBuf {

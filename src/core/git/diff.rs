@@ -2,9 +2,7 @@ use anyhow::{Context, Result, bail};
 use console::Style;
 use git2::{Repository, Tree};
 
-use super::index::build_index;
-use super::repo::autosnap_dir;
-use super::shell::select_commit_interactive;
+use super::{index::build_index, repo::autosnap_dir, shell::select_commit_interactive};
 
 #[derive(Clone, Copy, Debug)]
 pub enum DiffFormat {

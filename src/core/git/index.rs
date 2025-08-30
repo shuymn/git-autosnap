@@ -1,7 +1,7 @@
-use anyhow::Result;
-use git2::{ErrorClass, ErrorCode};
-use git2::{Oid, Repository};
 use std::path::Path;
+
+use anyhow::{Context, Result};
+use git2::{ErrorClass, ErrorCode, Oid, Repository};
 use tracing::warn;
 
 // Determine if a git2 error is likely a transient filesystem race
@@ -17,8 +17,6 @@ fn is_transient_fs_change(err: &git2::Error) -> bool {
 
 // Build the repository index from the working tree
 pub(crate) fn build_index(repo: &Repository) -> Result<()> {
-    use anyhow::Context;
-
     let work_tree = repo
         .workdir()
         .context("repository has no working directory")?;
@@ -40,8 +38,6 @@ struct DiscoveredFiles {
 
 // Discover files in the working tree (equivalent to: git ls-files -z --cached --others --exclude-standard)
 fn discover_files(repo: &Repository, work_tree: &Path) -> Result<Option<DiscoveredFiles>> {
-    use anyhow::Context;
-
     // Verify that the repository exists
     if !work_tree.join(".git").exists() {
         return Ok(None);
@@ -108,8 +104,6 @@ fn discover_files(repo: &Repository, work_tree: &Path) -> Result<Option<Discover
 
 // Update index using pre-discovered file list
 fn update_index_from_discovery(repo: &Repository, discovered: DiscoveredFiles) -> Result<()> {
-    use anyhow::Context;
-
     let mut index = repo.index().context("failed to get index")?;
 
     // Update tracked files first (uses stat cache)
@@ -157,8 +151,6 @@ fn remove_stale_entries(
 
 // Standard index update using libgit2
 fn update_index_standard(repo: &Repository) -> Result<()> {
-    use anyhow::Context;
-
     let mut index = repo.index()?;
 
     index
