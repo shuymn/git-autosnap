@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.6@sha256:ac85f380a63b13dfcefa89046420e1781752bab202122f8f50032edf31be0021
+# syntax=docker/dockerfile:1.17@sha256:38387523653efa0039f8e1c89bb74a30504e76ee9f565e25c9a09841f9427b05
 
 # Test image for container-based integration tests (feature: container-tests)
 # - Contains: git, bash, libgit2 runtime, and the git-autosnap binary in PATH
