@@ -1,7 +1,7 @@
 use crate::config::AutosnapConfig;
-use crate::flush_logs;
-use crate::gitlayer;
-use crate::process;
+use crate::core::git as gitlayer;
+use crate::core::runtime::process;
+use crate::logging::init::flush_logs;
 use anyhow::{Context, Result, anyhow};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};

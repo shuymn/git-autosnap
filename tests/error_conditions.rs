@@ -65,7 +65,7 @@ async fn test_diff_without_autosnap() -> Result<()> {
 
     // Try to run diff without autosnap initialized
     let diff_output = exec_in_allow_fail(&container, "/repo", "git autosnap diff").await?;
-    assert!(diff_output.contains("failed to open .autosnap repository"));
+    assert!(diff_output.contains(".autosnap is missing; run `git autosnap init` first"));
 
     Ok(())
 }

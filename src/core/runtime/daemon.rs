@@ -1,5 +1,5 @@
 use crate::config::AutosnapConfig;
-use crate::process::{pid_file, status};
+use crate::core::runtime::process::{pid_file, status};
 use anyhow::{Context, Result};
 use libc;
 use nix::sys::signal::{self, Signal};
