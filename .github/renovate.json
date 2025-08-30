@@ -1,0 +1,46 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:best-practices",
+    "schedule:weekly",
+    ":timezone(Asia/Tokyo)",
+    ":rebaseStalePrs"
+  ],
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": [
+      "before 4am on monday"
+    ],
+    "automerge": true
+  },
+  "packageRules": [
+    {
+      "matchManagers": [
+        "cargo"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
+      "groupName": "cargo: non-major updates",
+      "automerge": true,
+      "minimumReleaseAge": "14 days"
+    },
+    {
+      "matchManagers": [
+        "cargo"
+      ],
+      "matchDepTypes": [
+        "dev-dependencies"
+      ],
+      "groupName": "cargo: dev-dependencies",
+      "automerge": true
+    },
+    {
+      "matchManagers": [
+        "cargo"
+      ],
+      "separateMultipleMajor": true
+    }
+  ]
+}
