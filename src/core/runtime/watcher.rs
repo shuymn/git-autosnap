@@ -142,6 +142,7 @@ async fn run_watcher(repo_root: &Path, debounce_ms: u64) -> Result<()> {
     let (state, binary_update_rx) = build_state(repo_root, tracked_ignore_files)?;
 
     // Build watchexec config and start
+    // Clone needed: state is shared across async closures and signal handlers
     let config = build_watchexec_config(state.clone(), filterer, debounce_ms);
     let wx = Watchexec::with_config(config).context("failed to create watchexec")?;
 
@@ -175,7 +176,8 @@ fn build_state(
     let state = Arc::new(WatcherState {
         repo_root: repo_root.to_path_buf(),
         tracked_ignores: tracked_ignore_files,
-        exit_action: exit_action.clone(),
+        // Share exit_action via Arc for cross-handler coordination
+        exit_action,
         binary_update_tx,
         original_binary_metadata,
         snapshot_in_progress,
@@ -215,6 +217,7 @@ fn build_watchexec_config(
     });
 
     // Configure watchexec paths, filters and throttling
+    // Clone required: pathset() takes ownership of the path array
     config.pathset([state.repo_root.clone()]);
     config.filterer(filterer);
     config.throttle(Duration::from_millis(debounce_ms));
@@ -269,14 +272,17 @@ async fn build_filterer_and_ignores(
     // Track all ignore file paths for change detection
     let mut tracked_ignore_files = HashSet::new();
     for file in &origin_files {
+        // Clone required: HashSet needs ownership of PathBuf
         tracked_ignore_files.insert(file.path.clone());
     }
 
     let has_project_excludes = origin_files.iter().any(|f| f.applies_in.is_none());
     if !has_project_excludes {
+        // Clone required: env_files is consumed by extend() but also needed for tracking
         origin_files.extend(env_files.clone());
         // Also track environment ignore files if we're using them
         for file in &env_files {
+            // Clone required: HashSet needs ownership of PathBuf
             tracked_ignore_files.insert(file.path.clone());
         }
     }
@@ -340,6 +346,7 @@ fn handle_signals(signals: &[watchexec_signals::Signal], state: &WatcherState) -
                     .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
                     .is_ok()
                 {
+                    // Clones required: moving values into spawned blocking task
                     let root = state.repo_root.clone();
                     let in_progress = state.snapshot_in_progress.clone();
                     tokio::task::spawn_blocking(move || {
@@ -394,6 +401,7 @@ fn handle_fs_events(paths: &[(&Path, Option<&FileType>)], state: &WatcherState) 
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .is_ok()
         {
+            // Clones required: moving values into spawned blocking task
             let root = state.repo_root.clone();
             let in_progress = state.snapshot_in_progress.clone();
             tokio::task::spawn_blocking(move || {
@@ -431,6 +439,7 @@ fn request_binary_update(state: &WatcherState) {
     };
 
     // Use the metadata captured at startup (before any updates)
+    // Clone required: need to move Option<Metadata> out of Arc<WatcherState>
     let original_metadata = state.original_binary_metadata.clone();
 
     // If we don't have original metadata, we can't detect changes
@@ -440,20 +449,19 @@ fn request_binary_update(state: &WatcherState) {
     }
 
     // Spawn polling task
-    let exe_for_poll = exe_path.clone();
     let tx_for_poll = state.binary_update_tx.clone();
     std::thread::spawn(move || {
         info!(
             event = "binary_update_wait",
             "waiting for binary to change at {}",
-            exe_for_poll.display()
+            exe_path.display()
         );
 
         for i in 0..30 {
             // 30 * 500ms = 15s max
             std::thread::sleep(Duration::from_millis(500));
 
-            if let Ok(new_meta) = exe_for_poll.metadata()
+            if let Ok(new_meta) = exe_path.metadata()
                 && let Some(ref orig) = original_metadata
             {
                 // Check if binary changed (different inode or modification time)

@@ -4,7 +4,7 @@ use std::{
     process::{Command, Stdio},
 };
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use git2::{ObjectType, Repository, Tree, TreeWalkMode, TreeWalkResult};
 use skim::{
     Skim,
@@ -55,8 +55,10 @@ pub fn snapshot_shell(repo_root: &Path, commit: Option<&str>, interactive: bool)
         .as_object()
         .short_id()
         .context("failed to get short commit id")?;
-    let short_id_str = short_id.as_str().unwrap_or("unknown");
-    let message = commit.message().unwrap_or("no message");
+    let short_id_str = short_id
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("Short ID conversion failed"))?;
+    let message = commit.message().unwrap_or("<no message>");
     let first_line = message.lines().next().unwrap_or(message);
 
     println!("Opening snapshot in subshell:");
@@ -66,7 +68,13 @@ pub fn snapshot_shell(repo_root: &Path, commit: Option<&str>, interactive: bool)
     println!();
 
     // Determine which shell to use
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+    let shell = match std::env::var("SHELL") {
+        Ok(shell) if !shell.is_empty() => shell,
+        _ => {
+            eprintln!("Warning: SHELL environment variable not set, using /bin/sh");
+            "/bin/sh".to_string()
+        }
+    };
 
     // Launch subshell with modified prompt
     let ps1 = format!("[autosnap:{}] $ ", short_id_str);
@@ -92,11 +100,21 @@ pub fn snapshot_shell(repo_root: &Path, commit: Option<&str>, interactive: bool)
 
 /// Helper function to extract a git tree to a filesystem path
 fn extract_tree_to_path(repo: &Repository, tree: &Tree, base_path: &Path) -> Result<()> {
+    let mut errors = Vec::new();
+
     tree.walk(TreeWalkMode::PreOrder, |root, entry| {
+        let entry_name = match entry.name() {
+            Some(name) => name,
+            None => {
+                errors.push(anyhow!("Entry with missing name in path: {}", root));
+                return TreeWalkResult::Ok;
+            }
+        };
+
         let entry_path = if root.is_empty() {
-            PathBuf::from(entry.name().unwrap_or(""))
+            PathBuf::from(entry_name)
         } else {
-            PathBuf::from(root).join(entry.name().unwrap_or(""))
+            PathBuf::from(root).join(entry_name)
         };
 
         let full_path = base_path.join(&entry_path);
@@ -105,33 +123,57 @@ fn extract_tree_to_path(repo: &Repository, tree: &Tree, base_path: &Path) -> Res
             Some(ObjectType::Tree) => {
                 // Create directory
                 if let Err(e) = fs::create_dir_all(&full_path) {
-                    eprintln!("Failed to create directory {}: {}", full_path.display(), e);
+                    errors.push(anyhow!(
+                        "Failed to create directory {}: {}",
+                        full_path.display(),
+                        e
+                    ));
                 }
             }
             Some(ObjectType::Blob) => {
                 // Extract file
-                if let Ok(object) = entry.to_object(repo)
-                    && let Some(blob) = object.as_blob()
-                {
-                    // Ensure parent directory exists
-                    if let Some(parent) = full_path.parent() {
-                        let _ = fs::create_dir_all(parent);
-                    }
+                match entry.to_object(repo) {
+                    Ok(object) => {
+                        if let Some(blob) = object.as_blob() {
+                            // Ensure parent directory exists
+                            if let Some(parent) = full_path.parent()
+                                && let Err(e) = fs::create_dir_all(parent)
+                            {
+                                errors.push(anyhow!(
+                                    "Failed to create parent directory for {}: {}",
+                                    full_path.display(),
+                                    e
+                                ));
+                                return TreeWalkResult::Ok;
+                            }
 
-                    if let Err(e) = fs::write(&full_path, blob.content()) {
-                        eprintln!("Failed to write file {}: {}", full_path.display(), e);
-                    }
+                            if let Err(e) = fs::write(&full_path, blob.content()) {
+                                errors.push(anyhow!(
+                                    "Failed to write file {}: {}",
+                                    full_path.display(),
+                                    e
+                                ));
+                            }
 
-                    // Try to preserve executable permissions
-                    #[cfg(unix)]
-                    {
-                        use std::os::unix::fs::PermissionsExt;
-                        let filemode = entry.filemode();
-                        // Git stores executable as 0100755 (33261 in decimal)
-                        if filemode == 33261 {
-                            let permissions = fs::Permissions::from_mode(0o755);
-                            let _ = fs::set_permissions(&full_path, permissions);
+                            // Try to preserve executable permissions
+                            #[cfg(unix)]
+                            {
+                                use std::os::unix::fs::PermissionsExt;
+                                let filemode = entry.filemode();
+                                // Git stores executable as 0100755 (33261 in decimal)
+                                if filemode == 33261 {
+                                    let permissions = fs::Permissions::from_mode(0o755);
+                                    let _ = fs::set_permissions(&full_path, permissions);
+                                }
+                            }
                         }
+                    }
+                    Err(e) => {
+                        errors.push(anyhow!(
+                            "Failed to get object for {}: {}",
+                            entry_path.display(),
+                            e
+                        ));
                     }
                 }
             }
@@ -140,6 +182,13 @@ fn extract_tree_to_path(repo: &Repository, tree: &Tree, base_path: &Path) -> Res
 
         TreeWalkResult::Ok
     })?;
+
+    if !errors.is_empty() {
+        eprintln!("Warning: Some files could not be extracted:");
+        for err in &errors {
+            eprintln!("  - {}", err);
+        }
+    }
 
     Ok(())
 }
@@ -214,9 +263,15 @@ fn list_commits(repo: &Repository, limit: usize) -> Result<Vec<(String, String)>
         let commit = repo.find_commit(oid)?;
 
         let short_id = repo.find_object(oid, None)?.short_id()?;
-        let short_id_str = short_id.as_str().unwrap_or("unknown").to_string();
+        let short_id_str = match short_id.as_str() {
+            Some(id) => id.to_string(),
+            None => {
+                eprintln!("Warning: Could not convert short ID for commit {}", oid);
+                format!("{:.7}", oid)
+            }
+        };
 
-        let message = commit.message().unwrap_or("no message");
+        let message = commit.message().unwrap_or("<no message>");
         let first_line = message.lines().next().unwrap_or(message).to_string();
 
         commits.push((short_id_str, first_line));
