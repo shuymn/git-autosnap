@@ -1,7 +1,7 @@
 use anyhow::Result;
 
 use crate::app::context::AppContext;
-use crate::cli::{Cli, Commands as CliCommands};
+use crate::cli::{Cli, Commands};
 
 pub mod diff;
 pub mod gc;
@@ -25,35 +25,35 @@ pub fn dispatch(cli: Cli) -> Result<()> {
     let ctx = AppContext::from_repo(cli.verbose)?;
 
     match &cli.command {
-        CliCommands::Once { message } => {
+        Commands::Once { message } => {
             let cmd = once::OnceCommand {
                 message: message.clone(),
             };
             cmd.run(&ctx)
         }
-        CliCommands::Logs { follow, lines } => {
+        Commands::Logs { follow, lines } => {
             let cmd = logs::LogsCommand {
                 follow: *follow,
                 lines: *lines,
             };
             cmd.run(&ctx)
         }
-        CliCommands::Init => init::InitCommand.run(&ctx),
-        CliCommands::Start { daemon } => {
+        Commands::Init => init::InitCommand.run(&ctx),
+        Commands::Start { daemon } => {
             let cmd = start::StartCommand { daemon: *daemon };
             cmd.run(&ctx)
         }
-        CliCommands::Stop => stop::StopCommand.run(&ctx),
-        CliCommands::Status => status::StatusCommand.run(&ctx),
-        CliCommands::Gc { days, prune } => {
+        Commands::Stop => stop::StopCommand.run(&ctx),
+        Commands::Status => status::StatusCommand.run(&ctx),
+        Commands::Gc { days, prune } => {
             let cmd = gc::GcCommand {
                 days: *days,
                 prune: *prune,
             };
             cmd.run(&ctx)
         }
-        CliCommands::Uninstall => uninstall::UninstallCommand.run(&ctx),
-        CliCommands::Shell {
+        Commands::Uninstall => uninstall::UninstallCommand.run(&ctx),
+        Commands::Shell {
             commit,
             interactive,
         } => {
@@ -63,7 +63,7 @@ pub fn dispatch(cli: Cli) -> Result<()> {
             };
             cmd.run(&ctx)
         }
-        CliCommands::Restore {
+        Commands::Restore {
             commit,
             interactive,
             force,
@@ -81,7 +81,7 @@ pub fn dispatch(cli: Cli) -> Result<()> {
             };
             cmd.run(&ctx)
         }
-        CliCommands::Diff {
+        Commands::Diff {
             commit1,
             commit2,
             interactive,
