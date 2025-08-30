@@ -17,12 +17,13 @@ pub async fn show_logs(repo_root: &Path, follow: bool, lines: usize) -> Result<(
     // Find the most recent log file
     let log_path = find_latest_log_file(&log_dir).await?;
 
-    if log_path.is_none() {
-        println!("No log file found. The watcher may not have been started yet.");
-        return Ok(());
-    }
-
-    let log_path = log_path.unwrap();
+    let log_path = match log_path {
+        None => {
+            println!("No log file found. The watcher may not have been started yet.");
+            return Ok(());
+        }
+        Some(path) => path,
+    };
 
     // Show last N lines
     print_last_lines(&log_path, lines).await?;
@@ -71,7 +72,8 @@ async fn find_latest_log_file(log_dir: &Path) -> Result<Option<PathBuf>> {
             a_modified.cmp(&b_modified)
         });
 
-        Ok(Some(log_files.last().unwrap().clone()))
+        // Safe because we checked is_empty() above
+        Ok(log_files.last().cloned())
     }
 }
 
