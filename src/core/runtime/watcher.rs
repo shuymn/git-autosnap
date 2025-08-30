@@ -1,18 +1,25 @@
-use crate::config::AutosnapConfig;
-use crate::flush_logs;
-use crate::gitlayer;
-use crate::process;
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicU8, Ordering},
+        mpsc::{Receiver, SyncSender, sync_channel},
+    },
+    time::Duration,
+};
+
 use anyhow::{Context, Result, anyhow};
-use std::collections::HashSet;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
-use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
-use std::time::Duration;
 use tracing::{error, info, warn};
 use watchexec::Watchexec;
 use watchexec_events::FileType;
 use watchexec_filterer_ignore::IgnoreFilterer;
+
+use crate::{
+    config::AutosnapConfig,
+    core::{git, runtime::process},
+    logging::init::flush_logs,
+};
 
 /// Perform exec to restart the process with the same arguments.
 /// This replaces the current process with a new instance.
@@ -55,7 +62,7 @@ fn perform_exec() {
 ///   is deferred and performed after the watcher stops to avoid internal backpressure.
 pub fn start_foreground(repo_root: &Path, cfg: &AutosnapConfig) -> Result<()> {
     // ensure exists; ignore if already present
-    gitlayer::init_autosnap(repo_root).ok();
+    git::init_autosnap(repo_root).ok();
     // Acquire single-instance lock and write pid
     let _guard = process::acquire_lock(repo_root)?;
 
@@ -226,7 +233,7 @@ fn finalize_exit_actions(
     let action = load_exit_action(exit_action);
 
     if (action as u8) >= (ExitAction::Snapshot as u8) {
-        match gitlayer::snapshot_once(repo_root, None) {
+        match git::snapshot_once(repo_root, None) {
             Ok(Some(hash)) => {
                 info!(
                     hash = hash,
@@ -336,7 +343,7 @@ fn handle_signals(signals: &[watchexec_signals::Signal], state: &WatcherState) -
                     let root = state.repo_root.clone();
                     let in_progress = state.snapshot_in_progress.clone();
                     tokio::task::spawn_blocking(move || {
-                        match gitlayer::snapshot_once(&root, None) {
+                        match git::snapshot_once(&root, None) {
                             Ok(Some(hash)) => {
                                 info!(
                                     hash = hash,
@@ -390,7 +397,7 @@ fn handle_fs_events(paths: &[(&Path, Option<&FileType>)], state: &WatcherState) 
             let root = state.repo_root.clone();
             let in_progress = state.snapshot_in_progress.clone();
             tokio::task::spawn_blocking(move || {
-                match gitlayer::snapshot_once(&root, None) {
+                match git::snapshot_once(&root, None) {
                     Ok(Some(hash)) => {
                         info!(hash = hash, event = "snapshot_created", "snapshot created");
                     }

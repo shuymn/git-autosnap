@@ -1,4 +1,4 @@
-use git_autosnap::process::{acquire_lock, pid_file};
+use git_autosnap::core::runtime::process::{acquire_lock, pid_file};
 use tempfile::tempdir;
 
 #[test]

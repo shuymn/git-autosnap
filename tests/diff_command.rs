@@ -32,7 +32,7 @@ fn test_diff_without_autosnap() {
         .assert()
         .failure()
         .stderr(predicate::str::contains(
-            "failed to open .autosnap repository",
+            ".autosnap is missing; run `git autosnap init` first",
         ));
 }
 

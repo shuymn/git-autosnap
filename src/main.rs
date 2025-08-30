@@ -1,7 +1,11 @@
 use anyhow::Result;
 use clap::Parser;
-use git_autosnap::cli::{Cli, Commands};
-use git_autosnap::{gitlayer, init_tracing, init_tracing_with_file, run};
+use git_autosnap::{
+    cli::{Cli, Commands},
+    core::git,
+    logging::init::{init_tracing, init_tracing_with_file},
+    run,
+};
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -10,7 +14,7 @@ fn main() -> Result<()> {
     // Start command needs file logging for the watcher
     match &cli.command {
         Commands::Start { daemon } => {
-            let root = gitlayer::repo_root()?;
+            let root = git::repo_root()?;
             init_tracing_with_file(&root, cli.verbose, *daemon)?;
         }
         _ => {

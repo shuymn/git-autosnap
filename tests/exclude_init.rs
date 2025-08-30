@@ -1,6 +1,7 @@
+use std::fs;
+
 use assert_cmd::Command;
 use git2::Repository;
-use std::fs;
 use tempfile::TempDir;
 
 #[test]
