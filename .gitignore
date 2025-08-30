@@ -22,3 +22,6 @@ target
 
 # Task runner cache directory
 .task/
+
+# OS
+.DS_Store
