@@ -29,10 +29,10 @@ nix = { version = "0.30.1", features = ["signal"] }
 tracing-appender = "0.2.3"
 
 [dev-dependencies]
-assert_cmd = "2.0.17"
-predicates = "3.1.3"
-tempfile = "3.10.1"
-shell-escape = "0.1"
-testcontainers = "0.25.0"
-anyhow = { version = "1.0.99", features = ["std"] }
-tokio = { version = "1.47.1", features = ["macros", "rt-multi-thread"] }
+assert_cmd = "=2.0.17"
+predicates = "=3.1.3"
+tempfile = "=3.10.1"
+shell-escape = "=0.1.5"
+testcontainers = "=0.25.0"
+anyhow = { version = "=1.0.99", features = ["std"] }
+tokio = { version = "=1.47.1", features = ["macros", "rt-multi-thread"] }
