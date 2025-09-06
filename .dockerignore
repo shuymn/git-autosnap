@@ -1,0 +1,12 @@
+# Reduce Docker build context size for Dockerfile.test
+# Large directories and VCS metadata
+.git
+target
+.github
+.autosnap
+
+# OS/editor noise
+.DS_Store
+.idea
+.vscode
+*.log
