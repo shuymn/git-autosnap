@@ -7,30 +7,47 @@
 FROM rust:1-bullseye@sha256:5b0defc2e3b26c97c917406f3d7c682028f87b2ae9adee184694b5c0279e2740 AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-    git bash ca-certificates pkg-config libssl-dev libgit2-dev \
-    && rm -rf /var/lib/apt/lists/*
+# Enable effective apt caching with BuildKit cache mounts
+RUN rm -f /etc/apt/apt.conf.d/docker-clean \
+    && echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' \
+       > /etc/apt/apt.conf.d/keep-cache
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+      git bash ca-certificates pkg-config libssl-dev libgit2-dev
 
 WORKDIR /src
 
-# Cache deps first (optional optimization)
+# Cache deps first (BuildKit cache mounts for Cargo)
 COPY Cargo.toml Cargo.lock ./
-RUN mkdir -p src && echo "fn main(){}" > src/main.rs \
+RUN --mount=type=cache,id=cargo-registry,target=/usr/local/cargo/registry \
+    --mount=type=cache,id=cargo-git-db,target=/usr/local/cargo/git/db \
+    --mount=type=cache,id=rust-target,target=/src/target \
+    mkdir -p src && echo "fn main(){}" > src/main.rs \
     && cargo build --release || true
 
-# Build the actual binary
+# Build the actual binary (reuse Cargo caches)
 COPY . .
-RUN cargo install --path . --locked
+RUN --mount=type=cache,id=cargo-registry,target=/usr/local/cargo/registry \
+    --mount=type=cache,id=cargo-git-db,target=/usr/local/cargo/git/db \
+    --mount=type=cache,id=rust-target,target=/src/target \
+    cargo install --path . --locked
 
 # Final test image — keep toolchain to avoid runtime lib mismatches and ease debugging
 FROM rust:1-bullseye@sha256:5b0defc2e3b26c97c917406f3d7c682028f87b2ae9adee184694b5c0279e2740
 ENV DEBIAN_FRONTEND=noninteractive
-RUN set -eux; \
+# Use BuildKit cache mounts for apt in the runtime layer as well
+RUN rm -f /etc/apt/apt.conf.d/docker-clean \
+    && echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' \
+       > /etc/apt/apt.conf.d/keep-cache
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    set -eux; \
     apt-get update; \
-    apt-get install -y --no-install-recommends git bash ca-certificates; \
-    apt-get install -y --no-install-recommends libgit2-dev; \
-    rm -rf /var/lib/apt/lists/*
+    apt-get install -y --no-install-recommends \
+      git bash ca-certificates libgit2-dev
 
 # Copy the installed binary from builder and expose in PATH
 COPY --from=builder /usr/local/cargo/bin/git-autosnap /usr/local/bin/git-autosnap
