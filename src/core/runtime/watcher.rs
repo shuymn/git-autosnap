@@ -448,9 +448,9 @@ fn request_binary_update(state: &WatcherState) {
         return;
     }
 
-    // Spawn polling task
+    // Spawn polling task on Tokio to avoid blocking threads with sleeps
     let tx_for_poll = state.binary_update_tx.clone();
-    std::thread::spawn(move || {
+    tokio::spawn(async move {
         info!(
             event = "binary_update_wait",
             "waiting for binary to change at {}",
@@ -459,7 +459,7 @@ fn request_binary_update(state: &WatcherState) {
 
         for i in 0..30 {
             // 30 * 500ms = 15s max
-            std::thread::sleep(Duration::from_millis(500));
+            tokio::time::sleep(Duration::from_millis(500)).await;
 
             if let Ok(new_meta) = exe_path.metadata()
                 && let Some(ref orig) = original_metadata
