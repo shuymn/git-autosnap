@@ -1,3 +1,6 @@
+#[cfg(not(unix))]
+compile_error!("git-autosnap is Unix-only; build requires cfg(unix).");
+
 pub mod app;
 pub mod cli;
 pub mod commands;
