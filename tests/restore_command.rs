@@ -105,8 +105,7 @@ async fn test_restore_safety_check() -> Result<()> {
         let error_msg = e.to_string();
         assert!(
             error_msg.contains("uncommitted changes") || error_msg.contains("command failed"),
-            "Expected error about uncommitted changes, got: {}",
-            error_msg
+            "Expected error about uncommitted changes, got: {error_msg}",
         );
     }
 

@@ -8,6 +8,9 @@ use anyhow::{Context, Result};
 use git2::Repository;
 
 /// Discover the current repository root directory.
+///
+/// # Errors
+/// Returns an error if discovery fails or the repository has no working tree.
 pub fn repo_root() -> Result<PathBuf> {
     let repo = Repository::discover(".").context("not inside a Git repository")?;
     let workdir = repo
@@ -17,11 +20,15 @@ pub fn repo_root() -> Result<PathBuf> {
 }
 
 /// Return the `.autosnap` directory path under the given repo root.
+#[must_use]
 pub fn autosnap_dir(repo_root: &Path) -> PathBuf {
     repo_root.join(".autosnap")
 }
 
 /// Initialize the `.autosnap` bare repository if absent and add it to `.git/info/exclude`.
+///
+/// # Errors
+/// Returns an error if repository initialization or exclude file update fails.
 pub fn init_autosnap(repo_root: &Path) -> Result<()> {
     let path = autosnap_dir(repo_root);
     let is_new = !path.exists();

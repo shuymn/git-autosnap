@@ -19,11 +19,18 @@ pub mod uninstall;
 
 /// Unified interface implemented by each subcommand handler.
 pub trait Command {
+    /// Execute the subcommand.
+    ///
+    /// # Errors
+    /// Returns an error if the command fails.
     fn run(&self, ctx: &AppContext) -> Result<()>;
 }
 
 /// Central dispatcher: routes parsed CLI to subcommand handlers.
-pub fn dispatch(cli: Cli) -> Result<()> {
+///
+/// # Errors
+/// Returns an error if the invoked subcommand fails.
+pub fn dispatch(cli: &Cli) -> Result<()> {
     let ctx = AppContext::from_repo(cli.verbose)?;
 
     match &cli.command {
@@ -77,8 +84,16 @@ pub fn dispatch(cli: Cli) -> Result<()> {
                 commit: commit.as_deref(),
                 interactive: *interactive,
                 force: *force,
-                dry_run: *dry_run,
-                full: *full,
+                apply: if *dry_run {
+                    restore::RestoreApply::DryRun
+                } else {
+                    restore::RestoreApply::Apply
+                },
+                mode: if *full {
+                    restore::RestoreMode::Full
+                } else {
+                    restore::RestoreMode::Overlay
+                },
                 paths,
             };
             cmd.run(&ctx)
@@ -92,13 +107,21 @@ pub fn dispatch(cli: Cli) -> Result<()> {
             name_status,
             paths,
         } => {
+            let format = if *stat {
+                crate::core::git::DiffFormat::Stat
+            } else if *name_only {
+                crate::core::git::DiffFormat::NameOnly
+            } else if *name_status {
+                crate::core::git::DiffFormat::NameStatus
+            } else {
+                crate::core::git::DiffFormat::Unified
+            };
+
             let cmd = diff::DiffCommand {
                 commit1: commit1.as_deref(),
                 commit2: commit2.as_deref(),
                 interactive: *interactive,
-                stat: *stat,
-                name_only: *name_only,
-                name_status: *name_status,
+                format,
                 paths,
             };
             cmd.run(&ctx)

@@ -26,7 +26,7 @@ async fn test_shell_basic() -> Result<()> {
     let shell_output = exec_in(
         &container,
         "/repo",
-        &format!("echo 'ls' | git autosnap shell {}", commit_hash),
+        &format!("echo 'ls' | git autosnap shell {commit_hash}"),
     )
     .await?;
     assert!(shell_output.contains("test.txt"));
@@ -57,7 +57,7 @@ async fn test_shell_with_commit() -> Result<()> {
     let shell_output = exec_in(
         &container,
         "/repo",
-        &format!("echo 'ls' | git autosnap shell {}", commit1_hash),
+        &format!("echo 'ls' | git autosnap shell {commit1_hash}"),
     )
     .await?;
     assert!(shell_output.contains("file1.txt"));
@@ -66,7 +66,7 @@ async fn test_shell_with_commit() -> Result<()> {
     let shell_output = exec_in(
         &container,
         "/repo",
-        &format!("echo 'ls' | git autosnap shell {}", commit2_hash),
+        &format!("echo 'ls' | git autosnap shell {commit2_hash}"),
     )
     .await?;
     assert!(shell_output.contains("file1.txt"));
@@ -95,7 +95,7 @@ async fn test_shell_interactive() -> Result<()> {
 
     // Test interactive shell mode (simulating user input)
     // We'll test by providing input through a script
-    let script = r#"echo -e '\nls\nexit' | git autosnap shell -i"#;
+    let script = r"echo -e '\nls\nexit' | git autosnap shell -i";
     let shell_output = exec_in(&container, "/repo", script).await?;
 
     // Should contain file listing from the snapshot

@@ -22,11 +22,10 @@ pub(crate) fn build_index(repo: &Repository) -> Result<()> {
         .context("repository has no working directory")?;
 
     // Try optimized path first, fall back to standard approach
-    if let Some(discovered) = discover_files(repo, work_tree)? {
-        update_index_from_discovery(repo, discovered)
-    } else {
-        update_index_standard(repo)
-    }
+    (discover_files(repo, work_tree)?).map_or_else(
+        || update_index_standard(repo),
+        |discovered| update_index_from_discovery(repo, discovered),
+    )
 }
 
 // Structure to hold discovered files and optimization hints
@@ -108,7 +107,7 @@ fn update_index_from_discovery(repo: &Repository, discovered: DiscoveredFiles) -
 
     // Update tracked files first (uses stat cache)
     index
-        .update_all(["."].iter(), None)
+        .update_all(std::iter::once(&"."), None)
         .context("failed to update tracked files")?;
 
     // Remove stale entries - only check if we have indexed files
@@ -131,8 +130,10 @@ fn remove_stale_entries(
     current_files: &[String],
     indexed_paths: &std::collections::HashSet<String>,
 ) -> Result<()> {
-    let current_set: std::collections::HashSet<&str> =
-        current_files.iter().map(|s| s.as_str()).collect();
+    let current_set: std::collections::HashSet<&str> = current_files
+        .iter()
+        .map(std::string::String::as_str)
+        .collect();
 
     // Only check the paths we know are in the index
     let mut to_remove: Vec<&str> = Vec::new();
@@ -154,11 +155,11 @@ fn update_index_standard(repo: &Repository) -> Result<()> {
     let mut index = repo.index()?;
 
     index
-        .update_all(["."].iter(), None)
+        .update_all(std::iter::once(&"."), None)
         .context("failed to update tracked files")?;
 
     index
-        .add_all(["."].iter(), git2::IndexAddOption::DEFAULT, None)
+        .add_all(std::iter::once(&"."), git2::IndexAddOption::DEFAULT, None)
         .context("failed to add new files")?;
 
     let _ = index.remove_all([".autosnap", ".git"], None);

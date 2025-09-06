@@ -11,18 +11,19 @@ use tokio::{
     time::{Duration, interval},
 };
 
+/// View logs from the watcher, optionally following like `tail -f`.
+///
+/// # Errors
+/// Returns an error if reading log files fails.
 pub async fn show_logs(repo_root: &Path, follow: bool, lines: usize) -> Result<()> {
     let log_dir = repo_root.join(".autosnap");
 
     // Find the most recent log file
     let log_path = find_latest_log_file(&log_dir).await?;
 
-    let log_path = match log_path {
-        None => {
-            println!("No log file found. The watcher may not have been started yet.");
-            return Ok(());
-        }
-        Some(path) => path,
+    let Some(log_path) = log_path else {
+        println!("No log file found. The watcher may not have been started yet.");
+        return Ok(());
     };
 
     // Show last N lines
@@ -93,7 +94,7 @@ async fn print_last_lines(path: &Path, n: usize) -> Result<()> {
 
     // Print the last N lines
     for line in lines_buffer {
-        println!("{}", line);
+        println!("{line}");
     }
 
     Ok(())
@@ -120,7 +121,7 @@ async fn follow_file(path: &Path) -> Result<()> {
             let mut line = String::new();
 
             while reader.read_line(&mut line).await? > 0 {
-                print!("{}", line);
+                print!("{line}");
                 line.clear();
             }
 

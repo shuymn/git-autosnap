@@ -4,7 +4,7 @@ use clap::{ArgAction, Parser, Subcommand};
 #[derive(Parser, Debug, Clone)]
 #[command(name = "git-autosnap", version, about = "Record working tree snapshots in a local bare repo", long_about = None)]
 pub struct Cli {
-    /// Increase verbosity (-v, -vv, -vvv). RUST_LOG overrides this.
+    /// Increase verbosity (-v, -vv, -vvv). `RUST_LOG` overrides this.
     #[arg(short, long, action = ArgAction::Count)]
     pub verbose: u8,
 

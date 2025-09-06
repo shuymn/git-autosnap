@@ -9,7 +9,10 @@ pub mod core;
 pub mod logging;
 use anyhow::Result;
 
-/// Entry point for CLI subcommands: delegate to commands::dispatch
-pub fn run(cli: cli::Cli) -> Result<()> {
+/// Entry point for CLI subcommands: delegate to `commands::dispatch`
+///
+/// # Errors
+/// Bubbles up any error from the selected subcommand.
+pub fn run(cli: &cli::Cli) -> Result<()> {
     commands::dispatch(cli)
 }

@@ -14,7 +14,7 @@ fn pidfile_lock_is_exclusive() {
     match acquire_lock(root) {
         Ok(_) => panic!("second lock should fail"),
         Err(e) => {
-            let msg = format!("{}", e);
+            let msg = format!("{e}");
             assert!(msg.contains("already running"));
         }
     }

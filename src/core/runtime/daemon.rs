@@ -17,6 +17,9 @@ use crate::{
 };
 
 /// Start the watcher in background (daemonize). Placeholder.
+///
+/// # Errors
+/// Returns an error if the current executable cannot be determined or the child fails to spawn.
 pub fn start_daemon(repo_root: &Path, _cfg: &AutosnapConfig) -> Result<()> {
     // If already running, report and exit
     if status(repo_root)? {
@@ -54,6 +57,9 @@ pub fn start_daemon(repo_root: &Path, _cfg: &AutosnapConfig) -> Result<()> {
 }
 
 /// Stop the running daemon via pidfile and signal. Placeholder.
+///
+/// # Errors
+/// Returns an error if reading the pid file fails or waiting for shutdown fails.
 pub fn stop(repo_root: &Path) -> Result<()> {
     let pid_path = pid_file(repo_root);
     if !pid_path.exists() {
@@ -71,10 +77,10 @@ pub fn stop(repo_root: &Path) -> Result<()> {
     let pid = Pid::from_raw(pid_num);
     match signal::kill(pid, Signal::SIGTERM) {
         Ok(()) => {
-            println!("sent SIGTERM to {}", pid_num);
+            println!("sent SIGTERM to {pid_num}");
         }
         Err(e) => {
-            eprintln!("failed to send signal: {}", e);
+            eprintln!("failed to send signal: {e}");
         }
     }
 

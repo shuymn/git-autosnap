@@ -7,10 +7,10 @@ pub struct OnceCommand<'a> {
     pub message: Option<&'a str>,
 }
 
-impl<'a> Command for OnceCommand<'a> {
+impl Command for OnceCommand<'_> {
     fn run(&self, ctx: &AppContext) -> Result<()> {
         if let Some(hash) = crate::core::git::snapshot_once(&ctx.repo_root, self.message)? {
-            println!("{}", hash);
+            println!("{hash}");
         }
         Ok(())
     }
