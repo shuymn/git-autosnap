@@ -3,18 +3,18 @@ name: CI
 on:
   pull_request:
     paths:
-      - '**.rs'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - '.github/workflows/ci.yml'
+      - "**.rs"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/ci.yml"
   push:
     branches:
       - main
     paths:
-      - '**.rs'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - '.github/workflows/ci.yml'
+      - "**.rs"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/ci.yml"
 
 env:
   RUST_BACKTRACE: 1
@@ -149,6 +149,20 @@ jobs:
         with:
           install: true
 
+      # Build the test image before restoring host Cargo caches to reduce disk pressure
+      - name: Build test Docker image (with BuildKit cache)
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: .
+          file: Dockerfile.test
+          tags: git-autosnap-test:latest
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=min,ignore-error=true
+
+      - name: Prune Buildx caches (keep loaded image)
+        run: docker buildx prune -f
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
@@ -170,16 +184,6 @@ jobs:
           key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-test-
-
-      - name: Build test Docker image (with BuildKit cache)
-        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
-        with:
-          context: .
-          file: Dockerfile.test
-          tags: git-autosnap-test:latest
-          load: true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
 
       - name: Run tests
         run: cargo test --all-features --verbose
