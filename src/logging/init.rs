@@ -20,8 +20,10 @@ pub fn flush_logs() {
     }
 }
 
-/// Initialize tracing. RUST_LOG (if set) takes precedence.
+/// Initialize tracing. `RUST_LOG` (if set) takes precedence.
 /// Otherwise, -v/-vv map to "debug"/"trace".
+/// # Errors
+/// Returns an error if filter parsing fails.
 pub fn init_tracing(verbosity: u8) -> Result<()> {
     use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
@@ -44,8 +46,10 @@ pub fn init_tracing(verbosity: u8) -> Result<()> {
     Ok(())
 }
 
-/// Initialize tracing with file logging. RUST_LOG (if set) takes precedence.
+/// Initialize tracing with file logging. `RUST_LOG` (if set) takes precedence.
 /// Otherwise, -v/-vv map to "debug"/"trace".
+/// # Errors
+/// Returns an error if filter parsing fails.
 pub fn init_tracing_with_file(repo_root: &Path, verbosity: u8, is_daemon: bool) -> Result<()> {
     use tracing_appender::rolling;
     use tracing_subscriber::{EnvFilter, fmt, prelude::*};

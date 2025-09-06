@@ -60,14 +60,19 @@ fn perform_exec() {
 /// - Debounce is controlled by `autosnap.debounce-ms` (default 1000ms).
 /// - The watchexec action callback remains non-blocking; heavy work (snapshots, exec)
 ///   is deferred and performed after the watcher stops to avoid internal backpressure.
+/// Start the foreground watcher loop using watchexec, respecting git ignores.
+///
+/// # Errors
+/// Returns an error if the runtime cannot be created or the watcher fails.
+#[allow(clippy::doc_lazy_continuation)]
 pub fn start_foreground(repo_root: &Path, cfg: &AutosnapConfig) -> Result<()> {
     // ensure exists; ignore if already present
     git::init_autosnap(repo_root).ok();
     // Acquire single-instance lock and write pid
     let _guard = process::acquire_lock(repo_root)?;
 
-    // Run watchexec on a Tokio runtime to handle async APIs.
-    let rt = tokio::runtime::Builder::new_multi_thread()
+    // Run watchexec on a single-threaded Tokio runtime; some dependencies use !Send futures.
+    let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .context("failed to build tokio runtime")?;
@@ -127,6 +132,8 @@ fn load_exit_action(exit_action: &Arc<AtomicU8>) -> ExitAction {
     }
 }
 
+/// Run the watcher async task. Not Send; runs on current-thread runtime.
+#[allow(clippy::future_not_send)]
 async fn run_watcher(repo_root: &Path, debounce_ms: u64) -> Result<()> {
     // Build git-aware ignore filterer and tracked ignore files
     let (filterer, tracked_ignore_files) = build_filterer_and_ignores(repo_root)
@@ -139,11 +146,11 @@ async fn run_watcher(repo_root: &Path, debounce_ms: u64) -> Result<()> {
     );
 
     // Build shared state and binary update channel
-    let (state, binary_update_rx) = build_state(repo_root, tracked_ignore_files)?;
+    let (state, binary_update_rx) = build_state(repo_root, tracked_ignore_files);
 
     // Build watchexec config and start
     // Clone needed: state is shared across async closures and signal handlers
-    let config = build_watchexec_config(state.clone(), filterer, debounce_ms);
+    let config = build_watchexec_config(&state, filterer, debounce_ms);
     let wx = Watchexec::with_config(config).context("failed to create watchexec")?;
 
     info!(event = "watch_start", path = %repo_root.display(), debounce_ms, "watching");
@@ -163,7 +170,7 @@ async fn run_watcher(repo_root: &Path, debounce_ms: u64) -> Result<()> {
 fn build_state(
     repo_root: &Path,
     tracked_ignore_files: HashSet<PathBuf>,
-) -> Result<(Arc<WatcherState>, Receiver<bool>)> {
+) -> (Arc<WatcherState>, Receiver<bool>) {
     let (binary_update_tx, binary_update_rx) = sync_channel::<bool>(1);
     let exit_action = Arc::new(AtomicU8::new(ExitAction::None as u8));
     let snapshot_in_progress = Arc::new(AtomicBool::new(false));
@@ -183,11 +190,11 @@ fn build_state(
         snapshot_in_progress,
     });
 
-    Ok((state, binary_update_rx))
+    (state, binary_update_rx)
 }
 
 fn build_watchexec_config(
-    state: Arc<WatcherState>,
+    state: &Arc<WatcherState>,
     filterer: IgnoreFilterer,
     debounce_ms: u64,
 ) -> watchexec::Config {
@@ -198,14 +205,17 @@ fn build_watchexec_config(
     config.on_action(move |mut action| {
         // Check if any changed path is an ignore file we're tracking
         let paths: Vec<(&Path, Option<&FileType>)> = action.paths().collect();
-        if let Flow::Quit = handle_ignore_file_updates(&paths, &handler_state) {
+        if matches!(
+            handle_ignore_file_updates(&paths, &handler_state),
+            Flow::Quit
+        ) {
             action.quit();
             return action;
         }
 
         // Handle signals - collect them first to avoid borrowing issues
         let signals: Vec<_> = action.signals().collect();
-        if let Flow::Quit = handle_signals(&signals, &handler_state) {
+        if matches!(handle_signals(&signals, &handler_state), Flow::Quit) {
             action.quit();
             return action;
         }
@@ -228,6 +238,7 @@ fn build_watchexec_config(
     config
 }
 
+#[allow(clippy::cognitive_complexity)]
 fn finalize_exit_actions(
     repo_root: &Path,
     exit_action: &Arc<AtomicU8>,
@@ -262,6 +273,7 @@ fn finalize_exit_actions(
     }
 }
 
+#[allow(clippy::future_not_send)]
 async fn build_filterer_and_ignores(
     repo_root: &Path,
 ) -> Result<(IgnoreFilterer, HashSet<PathBuf>)> {
@@ -311,6 +323,7 @@ fn handle_ignore_file_updates(paths: &[(&Path, Option<&FileType>)], state: &Watc
     Flow::Continue
 }
 
+#[allow(clippy::cognitive_complexity)]
 fn handle_signals(signals: &[watchexec_signals::Signal], state: &WatcherState) -> Flow {
     use watchexec_signals::Signal;
     for signal in signals {

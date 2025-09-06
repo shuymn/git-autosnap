@@ -31,7 +31,7 @@ async fn snapshot_commit_message_and_contents() -> Result<()> {
     .await?;
     let re = predicate::str::is_match(r"^AUTOSNAP\[[^\]]+\] \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:")?
         .and(predicate::str::contains("AUTOSNAP["));
-    assert!(re.eval(subject.trim()), "bad subject: {}", subject);
+    assert!(re.eval(subject.trim()), "bad subject: {subject}");
 
     let listing = exec_in(
         &container,
@@ -41,8 +41,7 @@ async fn snapshot_commit_message_and_contents() -> Result<()> {
     .await?;
     assert!(
         listing.contains("a.txt"),
-        "missing a.txt in tree: {}",
-        listing
+        "missing a.txt in tree: {listing}"
     );
     Ok(())
 }

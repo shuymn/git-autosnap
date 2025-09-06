@@ -17,6 +17,9 @@ use crate::{
 };
 
 /// Start the watcher in background (daemonize). Placeholder.
+///
+/// # Errors
+/// Returns an error if the current executable cannot be determined or the child fails to spawn.
 pub fn start_daemon(repo_root: &Path, _cfg: &AutosnapConfig) -> Result<()> {
     // If already running, report and exit
     if status(repo_root)? {
@@ -32,6 +35,13 @@ pub fn start_daemon(repo_root: &Path, _cfg: &AutosnapConfig) -> Result<()> {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    // SAFETY:
+    // - `pre_exec` runs in the child process after `fork()` and before `exec()`. The closure must
+    //   only perform async-signal-safe operations. We call `setsid()` via `nix::unistd::setsid`,
+    //   which corresponds to the async-signal-safe libc `setsid(2)` to detach into a new session.
+    // - The closure does not capture or touch external state, perform allocations, or invoke
+    //   non–async-signal-safe functions. Converting the errno to `io::Error` with
+    //   `from_raw_os_error` is a simple value construction used only when propagating an error.
     unsafe {
         cmd.pre_exec(|| {
             // Detach from controlling terminal: create a new session via setsid()
@@ -47,6 +57,9 @@ pub fn start_daemon(repo_root: &Path, _cfg: &AutosnapConfig) -> Result<()> {
 }
 
 /// Stop the running daemon via pidfile and signal. Placeholder.
+///
+/// # Errors
+/// Returns an error if reading the pid file fails or waiting for shutdown fails.
 pub fn stop(repo_root: &Path) -> Result<()> {
     let pid_path = pid_file(repo_root);
     if !pid_path.exists() {
@@ -64,10 +77,10 @@ pub fn stop(repo_root: &Path) -> Result<()> {
     let pid = Pid::from_raw(pid_num);
     match signal::kill(pid, Signal::SIGTERM) {
         Ok(()) => {
-            println!("sent SIGTERM to {}", pid_num);
+            println!("sent SIGTERM to {pid_num}");
         }
         Err(e) => {
-            eprintln!("failed to send signal: {}", e);
+            eprintln!("failed to send signal: {e}");
         }
     }
 

@@ -8,6 +8,7 @@ mod support;
 use support::tc_exec::{exec_bash, exec_in};
 
 // Helper to check if TTY is available in container
+#[allow(clippy::future_not_send)]
 async fn has_tty<I: testcontainers::Image>(container: &testcontainers::ContainerAsync<I>) -> bool {
     exec_bash(container, "test -t 0").await.is_ok()
 }
@@ -38,7 +39,7 @@ async fn test_interactive_selection() -> Result<()> {
 
     // Test interactive restore mode (simulating user input)
     // We'll test by providing input through a script
-    let script = r#"echo -e '\n1\nexit' | git autosnap restore -i"#;
+    let script = r"echo -e '\n1\nexit' | git autosnap restore -i";
     let restore_output = exec_in(&container, "/repo", script).await?;
 
     // Should contain information about the restore operation
@@ -70,7 +71,7 @@ async fn test_interactive_cancel() -> Result<()> {
 
     // Test interactive mode cancellation (simulating ESC key)
     // We'll test by providing empty input to simulate cancellation
-    let script = r#"echo -e '\n\n' | git autosnap restore -i"#;
+    let script = r"echo -e '\n\n' | git autosnap restore -i";
     let restore_output = exec_in(&container, "/repo", script).await?;
 
     // Should contain error about no snapshot selected
@@ -106,7 +107,7 @@ async fn test_interactive_diff() -> Result<()> {
 
     // Test interactive diff mode (simulating user input)
     // We'll test by providing input through a script
-    let script = format!(r#"echo -e '\n{}\n' | git autosnap diff -i"#, commit1_hash);
+    let script = format!(r"echo -e '\n{commit1_hash}\n' | git autosnap diff -i");
     let diff_output = exec_in(&container, "/repo", &script).await?;
 
     // Should contain diff information

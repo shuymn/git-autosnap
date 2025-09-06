@@ -12,6 +12,10 @@ pub enum DiffFormat {
     NameStatus,
 }
 
+/// Show diffs between snapshots and/or working tree.
+///
+/// # Errors
+/// Returns an error if commits cannot be resolved or diffing fails.
 pub fn diff(
     repo_root: &std::path::Path,
     commit1: Option<&str>,
@@ -53,40 +57,40 @@ pub fn diff(
             let work_tree = build_working_tree_from_status(&repo, repo_root)?;
             (Some(work_tree), Some(commit_tree))
         }
-        (Some(ref commit_ref), None) => {
+        (Some(commit_ref), None) => {
             let obj = repo
                 .revparse_single(commit_ref)
-                .with_context(|| format!("failed to find commit: {}", commit_ref))?;
+                .with_context(|| format!("failed to find commit: {commit_ref}"))?;
             let commit = obj
                 .peel_to_commit()
-                .with_context(|| format!("failed to resolve commit: {}", commit_ref))?;
+                .with_context(|| format!("failed to resolve commit: {commit_ref}"))?;
             let commit_tree = commit.tree()?;
             let work_tree = build_working_tree_from_status(&repo, repo_root)?;
             (Some(commit_tree), Some(work_tree))
         }
-        (Some(ref commit1_ref), Some(ref commit2_ref)) => {
+        (Some(commit1_ref), Some(commit2_ref)) => {
             let obj1 = repo
                 .revparse_single(commit1_ref)
-                .with_context(|| format!("failed to find commit: {}", commit1_ref))?;
+                .with_context(|| format!("failed to find commit: {commit1_ref}"))?;
             let commit1 = obj1
                 .peel_to_commit()
-                .with_context(|| format!("failed to resolve commit: {}", commit1_ref))?;
+                .with_context(|| format!("failed to resolve commit: {commit1_ref}"))?;
             let obj2 = repo
                 .revparse_single(commit2_ref)
-                .with_context(|| format!("failed to find commit: {}", commit2_ref))?;
+                .with_context(|| format!("failed to find commit: {commit2_ref}"))?;
             let commit2 = obj2
                 .peel_to_commit()
-                .with_context(|| format!("failed to resolve commit: {}", commit2_ref))?;
+                .with_context(|| format!("failed to resolve commit: {commit2_ref}"))?;
             (Some(commit1.tree()?), Some(commit2.tree()?))
         }
-        (None, Some(ref commit_ref)) => {
+        (None, Some(commit_ref)) => {
             let work_tree = build_working_tree_from_status(&repo, repo_root)?;
             let obj = repo
                 .revparse_single(commit_ref)
-                .with_context(|| format!("failed to find commit: {}", commit_ref))?;
+                .with_context(|| format!("failed to find commit: {commit_ref}"))?;
             let commit = obj
                 .peel_to_commit()
-                .with_context(|| format!("failed to resolve commit: {}", commit_ref))?;
+                .with_context(|| format!("failed to resolve commit: {commit_ref}"))?;
             (Some(work_tree), Some(commit.tree()?))
         }
     };
@@ -152,8 +156,8 @@ fn print_unified_diff(diff: &git2::Diff) -> Result<()> {
                 .path()
                 .and_then(|p| p.to_str())
                 .unwrap_or("unknown");
-            println!("{}", header_style.apply_to(format!("--- {}", old_path)));
-            println!("{}", header_style.apply_to(format!("+++ {}", new_path)));
+            println!("{}", header_style.apply_to(format!("--- {old_path}")));
+            println!("{}", header_style.apply_to(format!("+++ {new_path}")));
             true
         },
         None,
@@ -174,10 +178,10 @@ fn print_unified_diff(diff: &git2::Diff) -> Result<()> {
                 }
             }
             match line.origin() {
-                '+' => print!("{}", added_style.apply_to(format!("+{}", content))),
-                '-' => print!("{}", removed_style.apply_to(format!("-{}", content))),
-                ' ' => print!("{}", context_style.apply_to(format!(" {}", content))),
-                _ => print!("{}", content),
+                '+' => print!("{}", added_style.apply_to(format!("+{content}"))),
+                '-' => print!("{}", removed_style.apply_to(format!("-{content}"))),
+                ' ' => print!("{}", context_style.apply_to(format!(" {content}"))),
+                _ => print!("{content}"),
             }
             true
         }),
@@ -201,7 +205,7 @@ fn print_diff_stats(diff: &git2::Diff) -> Result<()> {
                 .or_else(|| delta.old_file().path())
                 .and_then(|p| p.to_str())
                 .unwrap_or("unknown");
-            print!(" {}", path);
+            print!(" {path}");
             true
         },
         None,
@@ -220,7 +224,7 @@ fn print_diff_name_only(diff: &git2::Diff) -> Result<()> {
                 .or_else(|| delta.old_file().path())
                 .and_then(|p| p.to_str())
                 .unwrap_or("unknown");
-            println!("{}", path);
+            println!("{path}");
             true
         },
         None,
@@ -244,15 +248,13 @@ fn print_diff_name_status(diff: &git2::Diff) -> Result<()> {
                 git2::Delta::Deleted => "D",
                 git2::Delta::Modified => "M",
                 git2::Delta::Renamed => "R",
-                git2::Delta::Copied => "C",
+                git2::Delta::Copied | git2::Delta::Conflicted => "C",
                 git2::Delta::Ignored => "I",
-                git2::Delta::Untracked => "?",
+                git2::Delta::Untracked | git2::Delta::Unreadable => "?",
                 git2::Delta::Typechange => "T",
                 git2::Delta::Unmodified => "U",
-                git2::Delta::Conflicted => "C",
-                _ => "?",
             };
-            println!("{}\t{}", status, path);
+            println!("{status}\t{path}");
             true
         },
         None,

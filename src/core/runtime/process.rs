@@ -9,11 +9,14 @@ use anyhow::{Context, Result, anyhow};
 use fs2::FileExt;
 
 /// Path to the PID file inside `.autosnap`.
+#[must_use]
 pub fn pid_file(repo_root: &Path) -> PathBuf {
     repo_root.join(".autosnap").join("autosnap.pid")
 }
 
 /// Returns true if a daemon appears to be running (pidfile exists and pid is alive).
+/// # Errors
+/// Returns an error if reading or parsing the pid file fails.
 pub fn status(repo_root: &Path) -> Result<bool> {
     let pid_path = pid_file(repo_root);
     if !pid_path.exists() {
@@ -25,6 +28,8 @@ pub fn status(repo_root: &Path) -> Result<bool> {
 
 /// Remove `.autosnap` directory after stopping the daemon.
 /// Placeholder implementation.
+/// # Errors
+/// Returns an error if filesystem operations fail.
 pub fn uninstall(repo_root: &Path) -> Result<()> {
     let dir = repo_root.join(".autosnap");
     if dir.exists() {
@@ -51,6 +56,8 @@ impl Drop for PidGuard {
 }
 
 /// Acquire single-instance lock and write the current pid into the pidfile.
+/// # Errors
+/// Returns an error if the pidfile cannot be opened/locked or written.
 pub fn acquire_lock(repo_root: &Path) -> Result<PidGuard> {
     let pid_path = pid_file(repo_root);
     if let Some(parent) = pid_path.parent() {
@@ -70,16 +77,14 @@ pub fn acquire_lock(repo_root: &Path) -> Result<PidGuard> {
     if let Err(e) = file.try_lock_exclusive() {
         // Attempt to read pid to include in message
         let pid = read_pid_from_file(&file).unwrap_or(None);
-        let pid_str = pid
-            .map(|p| p.to_string())
-            .unwrap_or_else(|| "unknown".into());
+        let pid_str = pid.map_or_else(|| "unknown".into(), |p| p.to_string());
         return Err(anyhow!("autosnap already running (pid={pid_str}): {e}"));
     }
 
     // Truncate and write pid
     file.set_len(0)?;
     let pid = std::process::id();
-    writeln!(&file, "{}", pid)?;
+    writeln!(&file, "{pid}")?;
 
     // Permissions 0600
     let mut perms = file.metadata()?.permissions();
@@ -128,11 +133,7 @@ fn is_pid_alive(pid: i32) -> bool {
         use nix::{errno::Errno, sys::signal, unistd::Pid};
         match signal::kill(Pid::from_raw(pid), None) {
             Ok(()) => true,
-            Err(e) => match e {
-                Errno::EPERM => true,
-                Errno::ESRCH => false,
-                _ => false,
-            },
+            Err(e) => matches!(e, Errno::EPERM),
         }
     }
 

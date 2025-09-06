@@ -8,7 +8,7 @@ pub struct ShellCommand<'a> {
     pub interactive: bool,
 }
 
-impl<'a> Command for ShellCommand<'a> {
+impl Command for ShellCommand<'_> {
     fn run(&self, ctx: &AppContext) -> Result<()> {
         crate::core::git::snapshot_shell(&ctx.repo_root, self.commit, self.interactive)
     }

@@ -31,7 +31,7 @@ async fn test_sigterm_handling() -> Result<()> {
     let pid = pid_output.trim();
 
     // Send SIGTERM
-    exec_bash(&container, &format!("kill -TERM {}", pid)).await?;
+    exec_bash(&container, &format!("kill -TERM {pid}")).await?;
 
     // Wait a bit for signal handling
     exec_in(&container, "/repo", "sleep 1").await?;
@@ -72,7 +72,7 @@ async fn test_sigint_handling() -> Result<()> {
     let pid = pid_output.trim();
 
     // Send SIGINT
-    exec_bash(&container, &format!("kill -INT {}", pid)).await?;
+    exec_bash(&container, &format!("kill -INT {pid}")).await?;
 
     // Wait a bit for signal handling
     exec_in(&container, "/repo", "sleep 1").await?;
@@ -116,7 +116,7 @@ async fn test_sigusr1_handling() -> Result<()> {
     let pid = pid_output.trim();
 
     // Send SIGUSR1 to force a snapshot
-    exec_bash(&container, &format!("kill -USR1 {}", pid)).await?;
+    exec_bash(&container, &format!("kill -USR1 {pid}")).await?;
 
     // Wait a bit for snapshot creation
     exec_in(&container, "/repo", "sleep 1").await?;
@@ -155,7 +155,7 @@ async fn test_sigusr2_handling() -> Result<()> {
     let pid = pid_output.trim();
 
     // Send SIGUSR2 to prepare for binary update
-    exec_bash(&container, &format!("kill -USR2 {}", pid)).await?;
+    exec_bash(&container, &format!("kill -USR2 {pid}")).await?;
 
     // Wait for daemon to timeout waiting for binary update (up to 16s per the code)
     // We'll wait 17 seconds to be safe

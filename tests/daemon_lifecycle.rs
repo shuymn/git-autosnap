@@ -36,7 +36,7 @@ async fn daemon_start_status_stop() -> Result<()> {
         "sh -lc 'git autosnap status; echo EXIT:$?; true'",
     )
     .await?;
-    assert!(out.contains("EXIT:1"), "unexpected status output: {}", out);
+    assert!(out.contains("EXIT:1"), "unexpected status output: {out}");
     // And pidfile should be gone
     exec_in(&container, "/repo", "test ! -f .autosnap/autosnap.pid").await?;
 
@@ -66,7 +66,7 @@ async fn daemon_creates_snapshot_on_change() -> Result<()> {
     )
     .await?;
     let re = predicate::str::is_match(r"^AUTOSNAP\[[^\]]+\] \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:")?;
-    assert!(re.eval(subject.trim()), "bad subject: {}", subject);
+    assert!(re.eval(subject.trim()), "bad subject: {subject}");
 
     // Stop the daemon
     exec_in(&container, "/repo", "git autosnap stop").await?;

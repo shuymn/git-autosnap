@@ -25,5 +25,5 @@ fn main() -> Result<()> {
         }
     }
 
-    run(cli)
+    run(&cli)
 }

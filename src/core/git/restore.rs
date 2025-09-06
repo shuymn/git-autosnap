@@ -6,6 +6,10 @@ use git2::Repository;
 use super::{repo::autosnap_dir, shell::select_commit_interactive};
 
 /// Restore files from a snapshot to the working tree.
+///
+/// # Errors
+/// Returns an error if opening repositories, resolving commits, or checkout operations fail.
+#[allow(clippy::too_many_lines, clippy::fn_params_excessive_bools)]
 pub fn restore(
     repo_root: &Path,
     commit: Option<&str>,
@@ -73,11 +77,11 @@ pub fn restore(
     let commit_ref = commit_to_use.as_deref().unwrap_or("HEAD");
     let object = repo
         .revparse_single(commit_ref)
-        .with_context(|| format!("failed to parse commit reference: {}", commit_ref))?;
+        .with_context(|| format!("failed to parse commit reference: {commit_ref}"))?;
 
     let commit = object
         .peel_to_commit()
-        .with_context(|| format!("failed to resolve {} to a commit", commit_ref))?;
+        .with_context(|| format!("failed to resolve {commit_ref} to a commit"))?;
 
     let tree = commit.tree().context("failed to get tree from commit")?;
 
@@ -95,7 +99,7 @@ pub fn restore(
     } else {
         println!("Restoring from snapshot:");
     }
-    println!("  Commit: {} {}", short_id_str, first_line);
+    println!("  Commit: {short_id_str} {first_line}");
     if !paths.is_empty() {
         println!("  Paths: {}", paths.join(", "));
     }
@@ -154,17 +158,18 @@ pub fn restore(
                     fs::remove_dir_all(&path).with_context(|| {
                         format!("failed to remove directory: {}", path.display())
                     })?;
-                    println!("  Removed: {}", relative_path.display());
                 } else {
                     fs::remove_file(&path)
                         .with_context(|| format!("failed to remove file: {}", path.display()))?;
-                    println!("  Removed: {}", relative_path.display());
                 }
+                println!("  Removed: {}", relative_path.display());
             }
         }
     }
 
-    if !dry_run {
+    if dry_run {
+        println!("\nDRY RUN completed. No files were modified.");
+    } else {
         let main_repo =
             Repository::discover(repo_root).context("failed to open main repository")?;
         let mut index = main_repo
@@ -182,8 +187,6 @@ pub fn restore(
             println!("Note: Files not in the snapshot have been removed.");
         }
         println!("Note: Main repository index has been updated to match the restored state.");
-    } else {
-        println!("\nDRY RUN completed. No files were modified.");
     }
 
     Ok(())

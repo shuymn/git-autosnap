@@ -30,7 +30,7 @@ async fn test_debounce_handling() -> Result<()> {
             sleep 0.01
         done
     "#;
-    exec_bash(&container, &format!("cd /repo && {}", script)).await?;
+    exec_bash(&container, &format!("cd /repo && {script}")).await?;
 
     // Wait for debounce window to complete and snapshot to be created
     exec_in(&container, "/repo", "sleep 1").await?;
@@ -45,8 +45,7 @@ async fn test_debounce_handling() -> Result<()> {
     // Allow for 1-2 snapshots (timing can vary in container environment)
     assert!(
         (1..=2).contains(&snapshot_count),
-        "Expected 1-2 snapshots due to debouncing, got {}",
-        snapshot_count
+        "Expected 1-2 snapshots due to debouncing, got {snapshot_count}"
     );
 
     // Stop daemon

@@ -1,4 +1,5 @@
 #![cfg(feature = "container-tests")]
+#![allow(clippy::future_not_send, clippy::similar_names)]
 
 // Drop-in helpers for executing commands inside testcontainers.
 // Compatible with testcontainers v0.25.0 using async API
@@ -35,7 +36,7 @@ pub async fn exec_bash<I: Image>(c: &ContainerAsync<I>, cmd: &str) -> Result<Str
 
 /// Execute a command in a specific directory
 pub async fn exec_in<I: Image>(c: &ContainerAsync<I>, cwd: &str, cmd: &str) -> Result<String> {
-    let script = format!("cd {} && {}", escape(cwd.into()), cmd);
+    let script = format!("cd {} && {cmd}", escape(cwd.into()));
     exec_bash(c, &script).await
 }
 
@@ -47,7 +48,7 @@ pub async fn exec_in_allow_fail<I: Image>(
     cwd: &str,
     cmd: &str,
 ) -> Result<String> {
-    let script = format!("cd {} && {}", escape(cwd.into()), cmd);
+    let script = format!("cd {} && {cmd}", escape(cwd.into()));
     let exec_cmd = ExecCommand::new(["bash", "-lc", &script]);
     let mut result = c.exec(exec_cmd).await.context("container exec failed")?;
 

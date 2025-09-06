@@ -14,6 +14,9 @@ use skim::{
 use super::repo::autosnap_dir;
 
 /// Open a snapshot in a subshell for exploration.
+///
+/// # Errors
+/// Returns an error if repository access or subshell launch fails.
 pub fn snapshot_shell(repo_root: &Path, commit: Option<&str>, interactive: bool) -> Result<()> {
     let autosnap = autosnap_dir(repo_root);
     if !autosnap.exists() {
@@ -39,11 +42,11 @@ pub fn snapshot_shell(repo_root: &Path, commit: Option<&str>, interactive: bool)
     let commit_ref = commit_to_use.as_deref().unwrap_or("HEAD");
     let object = repo
         .revparse_single(commit_ref)
-        .with_context(|| format!("failed to parse commit reference: {}", commit_ref))?;
+        .with_context(|| format!("failed to parse commit reference: {commit_ref}"))?;
 
     let commit = object
         .peel_to_commit()
-        .with_context(|| format!("failed to resolve {} to a commit", commit_ref))?;
+        .with_context(|| format!("failed to resolve {commit_ref} to a commit"))?;
 
     let tree = commit.tree().context("failed to get tree from commit")?;
 
@@ -62,7 +65,7 @@ pub fn snapshot_shell(repo_root: &Path, commit: Option<&str>, interactive: bool)
     let first_line = message.lines().next().unwrap_or(message);
 
     println!("Opening snapshot in subshell:");
-    println!("  Commit: {} {}", short_id_str, first_line);
+    println!("  Commit: {short_id_str} {first_line}");
     println!("  Location: {}", temp_path.display());
     println!("  Type 'exit' to return and cleanup");
     println!();
@@ -77,7 +80,7 @@ pub fn snapshot_shell(repo_root: &Path, commit: Option<&str>, interactive: bool)
     };
 
     // Launch subshell with modified prompt
-    let ps1 = format!("[autosnap:{}] $ ", short_id_str);
+    let ps1 = format!("[autosnap:{short_id_str}] $ ");
 
     let status = Command::new(&shell)
         .current_dir(temp_path)
@@ -86,13 +89,13 @@ pub fn snapshot_shell(repo_root: &Path, commit: Option<&str>, interactive: bool)
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .status()
-        .with_context(|| format!("failed to launch subshell: {}", shell))?;
+        .with_context(|| format!("failed to launch subshell: {shell}"))?;
 
     // The temp_dir will be cleaned up automatically when it goes out of scope
     if status.success() {
         println!("\nSnapshot exploration completed, temporary directory cleaned up.");
     } else {
-        println!("\nSubshell exited with status: {}", status);
+        println!("\nSubshell exited with status: {status}");
     }
 
     Ok(())
@@ -103,12 +106,9 @@ fn extract_tree_to_path(repo: &Repository, tree: &Tree, base_path: &Path) -> Res
     let mut errors = Vec::new();
 
     tree.walk(TreeWalkMode::PreOrder, |root, entry| {
-        let entry_name = match entry.name() {
-            Some(name) => name,
-            None => {
-                errors.push(anyhow!("Entry with missing name in path: {}", root));
-                return TreeWalkResult::Ok;
-            }
+        let Some(entry_name) = entry.name() else {
+            errors.push(anyhow!("Entry with missing name in path: {}", root));
+            return TreeWalkResult::Ok;
         };
 
         let entry_path = if root.is_empty() {
@@ -186,7 +186,7 @@ fn extract_tree_to_path(repo: &Repository, tree: &Tree, base_path: &Path) -> Res
     if !errors.is_empty() {
         eprintln!("Warning: Some files could not be extracted:");
         for err in &errors {
-            eprintln!("  - {}", err);
+            eprintln!("  - {err}");
         }
     }
 
@@ -218,7 +218,7 @@ pub(crate) fn select_commit_interactive(autosnap_dir: &Path) -> Result<Option<St
     let options = SkimOptionsBuilder::default()
         .height("50%".to_string())
         .multi(false)
-        .preview(Some("".to_string()))
+        .preview(Some(String::new()))
         .preview_window("down:3:wrap".to_string())
         .prompt("Select snapshot> ".to_string())
         .build()
@@ -263,13 +263,13 @@ fn list_commits(repo: &Repository, limit: usize) -> Result<Vec<(String, String)>
         let commit = repo.find_commit(oid)?;
 
         let short_id = repo.find_object(oid, None)?.short_id()?;
-        let short_id_str = match short_id.as_str() {
-            Some(id) => id.to_string(),
-            None => {
-                eprintln!("Warning: Could not convert short ID for commit {}", oid);
-                format!("{:.7}", oid)
-            }
-        };
+        let short_id_str = short_id.as_str().map_or_else(
+            || {
+                eprintln!("Warning: Could not convert short ID for commit {oid}");
+                format!("{oid:.7}")
+            },
+            std::string::ToString::to_string,
+        );
 
         let message = commit.message().unwrap_or("<no message>");
         let first_line = message.lines().next().unwrap_or(message).to_string();

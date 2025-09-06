@@ -8,6 +8,13 @@ rust-version = "1.89"
 default = []
 container-tests = []
 
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+pedantic = "warn"
+nursery = "warn"
+
 [dependencies]
 anyhow = "=1.0.99"
 clap = { version = "4.5.45", features = ["derive"] }

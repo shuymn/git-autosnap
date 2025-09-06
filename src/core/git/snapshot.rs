@@ -6,7 +6,10 @@ use git2::{Commit, Repository, Signature, Tree};
 use super::{index::write_tree_with_retries, repo::autosnap_dir};
 
 /// Take a single snapshot of the working tree and commit it into `.autosnap`.
-/// Returns the short hash of the created commit, or None if no changes were made.
+/// Returns the short hash of the created commit, or `None` if no changes were made.
+///
+/// # Errors
+/// Returns an error if repository operations fail (building index, creating commit, etc.).
 pub fn snapshot_once(repo_root: &Path, message: Option<&str>) -> Result<Option<String>> {
     let autosnap = autosnap_dir(repo_root);
     if !autosnap.exists() {
@@ -42,11 +45,10 @@ pub fn snapshot_once(repo_root: &Path, message: Option<&str>) -> Result<Option<S
     // Commit message
     let branch = current_branch_name(repo_root).unwrap_or_else(|| "DETACHED".to_string());
     let ts = iso8601_now_with_offset();
-    let msg = if let Some(custom_msg) = message {
-        format!("AUTOSNAP[{branch}] {ts}: {custom_msg}")
-    } else {
-        format!("AUTOSNAP[{branch}] {ts}")
-    };
+    let msg = message.map_or_else(
+        || format!("AUTOSNAP[{branch}] {ts}"),
+        |custom_msg| format!("AUTOSNAP[{branch}] {ts}: {custom_msg}"),
+    );
 
     // Determine parents (if any)
     let parents: Vec<Commit> = match repo.head() {
@@ -111,7 +113,7 @@ fn current_branch_name(repo_root: &Path) -> Option<String> {
     let main_repo = Repository::discover(repo_root).ok()?;
     let head = main_repo.head().ok()?;
     if head.is_branch() {
-        head.shorthand().map(|s| s.to_string())
+        head.shorthand().map(std::string::ToString::to_string)
     } else {
         None
     }
