@@ -6,13 +6,13 @@ use tracing::warn;
 
 // Determine if a git2 error is likely a transient filesystem race
 // where a file changed between stat and read during index population.
+//
+// Note: We intentionally rely on libgit2's structured `ErrorClass`/`ErrorCode`
+// (Filesystem / Modified) rather than parsing error message strings, which are
+// not stable across libgit2 versions/locales. If new transient patterns emerge
+// that are only distinguishable via structured codes, extend the matches below.
 fn is_transient_fs_change(err: &git2::Error) -> bool {
-    matches!(err.class(), ErrorClass::Filesystem)
-        || matches!(err.code(), ErrorCode::Modified)
-        || err
-            .message()
-            .to_lowercase()
-            .contains("file changed before we could read it")
+    matches!(err.class(), ErrorClass::Filesystem) || matches!(err.code(), ErrorCode::Modified)
 }
 
 // Build the repository index from the working tree
