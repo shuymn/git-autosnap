@@ -18,7 +18,6 @@ watchexec = "8.0.1"
 watchexec-filterer-ignore = "7.0.0"
 ignore-files = "3.0.4"
 fs2 = "0.4.3"
-libc = "0.2"
 time = { version = "0.3.36", features = ["formatting", "local-offset"] }
 tempfile = "=3.21.0"
 skim = "0.20.5"

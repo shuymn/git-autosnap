@@ -117,11 +117,29 @@ fn parse_pid(s: &str) -> Result<Option<i32>> {
 }
 
 fn is_pid_alive(pid: i32) -> bool {
-    // Use /bin/kill -0 to test for liveness
-    std::process::Command::new("/bin/kill")
-        .arg("-0")
-        .arg(pid.to_string())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    // Use nix::sys::signal::kill with None (signal 0) to probe liveness without unsafe.
+    // Semantics:
+    //   Ok(())        -> process exists and permission allows signaling
+    //   Err(EPERM)    -> process exists but we lack permission
+    //   Err(ESRCH)    -> no such process (dead)
+    //   Other errors  -> treated as not alive
+    #[cfg(unix)]
+    {
+        use nix::{errno::Errno, sys::signal, unistd::Pid};
+        match signal::kill(Pid::from_raw(pid), None) {
+            Ok(()) => true,
+            Err(e) => match e {
+                Errno::EPERM => true,
+                Errno::ESRCH => false,
+                _ => false,
+            },
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        // Non-Unix platforms are not currently supported by this module.
+        // Default to false for safety.
+        false
+    }
 }

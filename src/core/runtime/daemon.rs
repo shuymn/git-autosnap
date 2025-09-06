@@ -6,10 +6,9 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use libc;
 use nix::{
     sys::signal::{self, Signal},
-    unistd::Pid,
+    unistd::{self, Pid},
 };
 
 use crate::{
@@ -28,17 +27,18 @@ pub fn start_daemon(repo_root: &Path, _cfg: &AutosnapConfig) -> Result<()> {
     // Spawn a detached child running `start` (foreground) with stdio to /dev/null and new session
     let exe = std::env::current_exe().context("failed to get current executable")?;
     let mut cmd = Command::new(exe);
+    cmd.current_dir(repo_root)
+        .arg("start")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
     unsafe {
-        cmd.current_dir(repo_root)
-            .arg("start")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .pre_exec(|| {
-                // SAFETY: setsid creates a new session, detaching from controlling terminal
-                libc::setsid();
-                Ok(())
-            });
+        cmd.pre_exec(|| {
+            // Detach from controlling terminal: create a new session via setsid()
+            unistd::setsid()
+                .map(|_| ())
+                .map_err(|e| std::io::Error::from_raw_os_error(e as i32))
+        });
     }
 
     let child = cmd.spawn().context("failed to spawn daemon child")?;
