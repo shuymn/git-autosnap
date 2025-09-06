@@ -2,7 +2,7 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "config:best-practices",
-    "schedule:weekly",
+    "schedule:weekends",
     ":timezone(Asia/Tokyo)",
     ":rebaseStalePrs"
   ],
@@ -17,21 +17,28 @@
   },
   "packageRules": [
     {
-      "matchManagers": ["cargo"],
+      "description": "Automerge minor and patch updates for all dependencies",
       "matchUpdateTypes": ["minor", "patch"],
-      "groupName": "cargo: non-major updates",
-      "automerge": true,
-      "minimumReleaseAge": "14 days"
-    },
-    {
-      "matchManagers": ["cargo"],
-      "matchDepTypes": ["dev-dependencies"],
-      "groupName": "cargo: dev-dependencies",
+      "matchCurrentVersion": ">=1.0.0",
       "automerge": true
     },
     {
+      "description": "Group all cargo dependencies by name",
       "matchManagers": ["cargo"],
-      "separateMultipleMajor": true
+      "matchDepTypes": [
+        "dependencies",
+        "dev-dependencies",
+        "build-dependencies"
+      ],
+      "groupName": "cargo: {{depName}} (all sections)",
+      "groupSlug": "cargo-{{depName}}",
+      "separateMajorMinor": false,
+      "separateMinorPatch": false
+    },
+    {
+      "description": "Replace the entire version range for cargo dependencies",
+      "matchManagers": ["cargo"],
+      "rangeStrategy": "replace"
     }
   ]
 }
