@@ -6,40 +6,31 @@
     ":timezone(Asia/Tokyo)",
     ":rebaseStalePrs"
   ],
+  "prHourlyLimit": 0,
+  "minimumReleaseAge": "3 days",
+  "internalChecksAsSuccess": true,
+  "reviewersFromCodeOwners": true,
+  "assignAutomerge": true,
   "lockFileMaintenance": {
     "enabled": true,
-    "schedule": [
-      "before 4am on monday"
-    ],
     "automerge": true
   },
   "packageRules": [
     {
-      "matchManagers": [
-        "cargo"
-      ],
-      "matchUpdateTypes": [
-        "minor",
-        "patch"
-      ],
+      "matchManagers": ["cargo"],
+      "matchUpdateTypes": ["minor", "patch"],
       "groupName": "cargo: non-major updates",
       "automerge": true,
       "minimumReleaseAge": "14 days"
     },
     {
-      "matchManagers": [
-        "cargo"
-      ],
-      "matchDepTypes": [
-        "dev-dependencies"
-      ],
+      "matchManagers": ["cargo"],
+      "matchDepTypes": ["dev-dependencies"],
       "groupName": "cargo: dev-dependencies",
       "automerge": true
     },
     {
-      "matchManagers": [
-        "cargo"
-      ],
+      "matchManagers": ["cargo"],
       "separateMultipleMajor": true
     }
   ]
