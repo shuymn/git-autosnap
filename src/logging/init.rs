@@ -15,8 +15,8 @@ pub fn flush_logs() {
     {
         // Explicitly drop to ensure flush happens before continuing
         drop(guard);
-        // Give the filesystem a moment to complete the write
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        // Do not block the current thread with sleeps; dropping the guard
+        // flushes pending logs synchronously in tracing-appender's worker.
     }
 }
 
