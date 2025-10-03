@@ -4,7 +4,7 @@
 # - Contains: git, bash, libgit2 runtime, and the git-autosnap binary in PATH
 # - Tag this image as: git-autosnap-test:latest
 
-FROM rust:1-bullseye@sha256:73a92cf6b24320e587205583c29f79d7550ca4583552447428a275cacc0ae8df AS builder
+FROM rust:1-bullseye@sha256:d7cb9ffcc56d9f1a6334f54aae6614efe2814516db17e3acd4b88293dd8dc31c AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 # Enable effective apt caching with BuildKit cache mounts
@@ -36,7 +36,7 @@ RUN --mount=type=cache,id=cargo-registry,target=/usr/local/cargo/registry \
     cargo install --path . --locked
 
 # Final test image — keep toolchain to avoid runtime lib mismatches and ease debugging
-FROM rust:1-bullseye@sha256:73a92cf6b24320e587205583c29f79d7550ca4583552447428a275cacc0ae8df
+FROM rust:1-bullseye@sha256:d7cb9ffcc56d9f1a6334f54aae6614efe2814516db17e3acd4b88293dd8dc31c
 ENV DEBIAN_FRONTEND=noninteractive
 # Use BuildKit cache mounts for apt in the runtime layer as well
 RUN rm -f /etc/apt/apt.conf.d/docker-clean \
