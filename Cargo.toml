@@ -16,7 +16,7 @@ pedantic = "warn"
 nursery = "warn"
 
 [dependencies]
-anyhow = "=1.0.99"
+anyhow = "=1.0.100"
 clap = { version = "4.5.45", features = ["derive"] }
 git2 = "0.20.2"
 tokio = "=1.48.0"
@@ -41,5 +41,5 @@ predicates = "=3.1.3"
 tempfile = "=3.23.0"
 shell-escape = "=0.1.5"
 testcontainers = "=0.25.0"
-anyhow = { version = "=1.0.99", features = ["std"] }
+anyhow = { version = "=1.0.100", features = ["std"] }
 tokio = { version = "=1.48.0", features = ["macros", "rt-multi-thread"] }
