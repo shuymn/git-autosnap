@@ -107,7 +107,7 @@ fn extract_tree_to_path(repo: &Repository, tree: &Tree, base_path: &Path) -> Res
 
     tree.walk(TreeWalkMode::PreOrder, |root, entry| {
         let Some(entry_name) = entry.name() else {
-            errors.push(anyhow!("Entry with missing name in path: {}", root));
+            errors.push(anyhow!("Entry with missing name in path: {root}"));
             return TreeWalkResult::Ok;
         };
 

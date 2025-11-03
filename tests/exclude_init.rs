@@ -1,8 +1,12 @@
 use std::fs;
 
-use assert_cmd::Command;
+use assert_cmd::{Command, cargo::cargo_bin_cmd};
 use git2::Repository;
 use tempfile::TempDir;
+
+fn git_autosnap_cmd() -> Command {
+    cargo_bin_cmd!("git-autosnap")
+}
 
 #[test]
 fn test_init_adds_to_git_exclude() {
@@ -13,8 +17,7 @@ fn test_init_adds_to_git_exclude() {
     Repository::init(repo_path).unwrap();
 
     // Run git autosnap init
-    Command::cargo_bin("git-autosnap")
-        .unwrap()
+    git_autosnap_cmd()
         .current_dir(repo_path)
         .arg("init")
         .assert()
@@ -45,8 +48,7 @@ fn test_init_idempotent_for_exclude() {
 
     // Run git autosnap init twice
     for _ in 0..2 {
-        Command::cargo_bin("git-autosnap")
-            .unwrap()
+        git_autosnap_cmd()
             .current_dir(repo_path)
             .arg("init")
             .assert()
@@ -81,8 +83,7 @@ fn test_init_preserves_existing_exclude_entries() {
     fs::write(&exclude_path, "*.log\n.DS_Store\n").unwrap();
 
     // Run git autosnap init
-    Command::cargo_bin("git-autosnap")
-        .unwrap()
+    git_autosnap_cmd()
         .current_dir(repo_path)
         .arg("init")
         .assert()
@@ -119,8 +120,7 @@ fn test_init_handles_missing_git_info_dir() {
     }
 
     // Run git autosnap init - should create info dir and exclude file
-    Command::cargo_bin("git-autosnap")
-        .unwrap()
+    git_autosnap_cmd()
         .current_dir(repo_path)
         .arg("init")
         .assert()
@@ -144,8 +144,7 @@ fn test_init_handles_non_git_directory() {
     let non_git_path = temp_dir.path();
 
     // Don't initialize a git repo - just try to run git autosnap init
-    Command::cargo_bin("git-autosnap")
-        .unwrap()
+    git_autosnap_cmd()
         .current_dir(non_git_path)
         .arg("init")
         .assert()

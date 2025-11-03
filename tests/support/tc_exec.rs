@@ -28,7 +28,7 @@ pub async fn exec_bash<I: Image>(c: &ContainerAsync<I>, cmd: &str) -> Result<Str
     let exit_code = result.exit_code().await?;
     if exit_code != Some(0) {
         let stderr_str = String::from_utf8_lossy(&stderr);
-        bail!("command failed (code {:?}): {}", exit_code, stderr_str);
+        bail!("command failed (code {exit_code:?}): {stderr_str}");
     }
 
     String::from_utf8(stdout).context("invalid utf8 on stdout")
