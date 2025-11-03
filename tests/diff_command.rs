@@ -1,11 +1,14 @@
-use assert_cmd::Command;
+use assert_cmd::{Command, cargo::cargo_bin_cmd};
 use predicates::prelude::*;
 use tempfile::TempDir;
 
+fn git_autosnap_cmd() -> Command {
+    cargo_bin_cmd!("git-autosnap")
+}
+
 #[test]
 fn test_diff_help() {
-    Command::cargo_bin("git-autosnap")
-        .unwrap()
+    git_autosnap_cmd()
         .arg("diff")
         .arg("--help")
         .assert()
@@ -25,8 +28,7 @@ fn test_diff_without_autosnap() {
         .success();
 
     // Try to run diff without autosnap initialized
-    Command::cargo_bin("git-autosnap")
-        .unwrap()
+    git_autosnap_cmd()
         .arg("diff")
         .current_dir(&temp_dir)
         .assert()
@@ -61,8 +63,7 @@ fn test_diff_formats() {
         .success();
 
     // Initialize autosnap
-    Command::cargo_bin("git-autosnap")
-        .unwrap()
+    git_autosnap_cmd()
         .arg("init")
         .current_dir(&temp_dir)
         .assert()
@@ -71,8 +72,7 @@ fn test_diff_formats() {
     // Create a test file and take a snapshot
     std::fs::write(temp_dir.path().join("test.txt"), "initial content").unwrap();
 
-    Command::cargo_bin("git-autosnap")
-        .unwrap()
+    git_autosnap_cmd()
         .arg("once")
         .current_dir(&temp_dir)
         .assert()
@@ -82,8 +82,7 @@ fn test_diff_formats() {
     std::fs::write(temp_dir.path().join("test.txt"), "modified content").unwrap();
 
     // Test --stat format
-    Command::cargo_bin("git-autosnap")
-        .unwrap()
+    git_autosnap_cmd()
         .args(["diff", "--stat"])
         .current_dir(&temp_dir)
         .assert()
@@ -91,8 +90,7 @@ fn test_diff_formats() {
         .stdout(predicate::str::contains("1 files changed"));
 
     // Test --name-only format
-    Command::cargo_bin("git-autosnap")
-        .unwrap()
+    git_autosnap_cmd()
         .args(["diff", "--name-only"])
         .current_dir(&temp_dir)
         .assert()
@@ -100,8 +98,7 @@ fn test_diff_formats() {
         .stdout(predicate::str::contains("test.txt"));
 
     // Test --name-status format
-    Command::cargo_bin("git-autosnap")
-        .unwrap()
+    git_autosnap_cmd()
         .args(["diff", "--name-status"])
         .current_dir(&temp_dir)
         .assert()
@@ -134,8 +131,7 @@ fn test_diff_between_commits() {
         .success();
 
     // Initialize autosnap
-    Command::cargo_bin("git-autosnap")
-        .unwrap()
+    git_autosnap_cmd()
         .arg("init")
         .current_dir(&temp_dir)
         .assert()
@@ -144,8 +140,7 @@ fn test_diff_between_commits() {
     // Create first snapshot
     std::fs::write(temp_dir.path().join("file1.txt"), "content1").unwrap();
 
-    let output1 = Command::cargo_bin("git-autosnap")
-        .unwrap()
+    let output1 = git_autosnap_cmd()
         .arg("once")
         .current_dir(&temp_dir)
         .assert()
@@ -159,8 +154,7 @@ fn test_diff_between_commits() {
     // Create second snapshot
     std::fs::write(temp_dir.path().join("file2.txt"), "content2").unwrap();
 
-    let output2 = Command::cargo_bin("git-autosnap")
-        .unwrap()
+    let output2 = git_autosnap_cmd()
         .arg("once")
         .current_dir(&temp_dir)
         .assert()
@@ -172,8 +166,7 @@ fn test_diff_between_commits() {
     let commit2 = String::from_utf8_lossy(&output2).trim().to_string();
 
     // Test diff between two commits
-    Command::cargo_bin("git-autosnap")
-        .unwrap()
+    git_autosnap_cmd()
         .args(["diff", &commit1, &commit2, "--name-only"])
         .current_dir(&temp_dir)
         .assert()
