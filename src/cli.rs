@@ -37,15 +37,11 @@ pub enum Commands {
         message: Option<String>,
     },
 
-    /// Garbage collect (compress) snapshots, optionally pruning old ones
-    Gc {
-        /// Prune snapshots older than N days when used with --prune
+    /// Compact old snapshot history into a single baseline commit
+    Compact {
+        /// Compact snapshots older than N days (defaults to autosnap.compact.days)
         #[arg(long, value_name = "DAYS")]
         days: Option<u32>,
-
-        /// Enable pruning of old snapshots (requires --days or uses default 60)
-        #[arg(long)]
-        prune: bool,
     },
 
     /// Stop watcher (if running) and remove .autosnap directory
