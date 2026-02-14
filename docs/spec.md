@@ -65,7 +65,7 @@ flowchart TD
      repo.commit(Some("HEAD"), &sig, &sig, &msg, &tree, &parents)?;
      ```
 
-  4. *(Optional)* prune: `repo.gc(prune=30 days)`
+  4. *(Optional)* compact: collapse old history into one baseline commit, then run post-gc
 
 #### 4.3 Commit-message Format
 
@@ -82,8 +82,8 @@ git autosnap start --daemon  # launch watcher in background (daemonize)
 git autosnap stop         # send SIGTERM to pid in .autosnap/autosnap.pid
 git autosnap status       # exit 0 if running
 git autosnap once         # take one snapshot and exit
-git autosnap gc           # compress snapshots (pack objects)
-git autosnap gc --prune   # prune snapshots older than --days N (default 60)
+git autosnap compact      # compact old snapshots using configured retention
+git autosnap compact --days N  # compact snapshots older than N days
 git autosnap uninstall    # stop watcher if running and remove .autosnap directory
 ```
 
@@ -104,7 +104,7 @@ Configuration is managed through git config with the `autosnap` section:
 ```bash
 # Set configuration values
 git config autosnap.debounce-ms 300
-git config autosnap.gc.prune-days 45
+git config autosnap.compact.days 45
 
 # Read configuration values
 git config autosnap.debounce-ms                    # returns: 300
