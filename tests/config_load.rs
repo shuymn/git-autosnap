@@ -19,10 +19,10 @@ fn config_loads_from_repo_config() {
     cmd.assert().success();
     let mut cmd = Command::new("git");
     cmd.current_dir(root)
-        .args(["config", "autosnap.gc.prune-days", "5"]);
+        .args(["config", "autosnap.compact.days", "5"]);
     cmd.assert().success();
 
     let cfg = AutosnapConfig::load(root).expect("load config");
     assert_eq!(cfg.debounce_ms, 321);
-    assert_eq!(cfg.prune_days, 5);
+    assert_eq!(cfg.compact_days, 5);
 }

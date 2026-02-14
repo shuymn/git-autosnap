@@ -109,7 +109,7 @@ async fn test_daemon_with_corrupted_pidfile() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_gc_without_snapshots() -> Result<()> {
+async fn test_compact_without_snapshots() -> Result<()> {
     let image = GenericImage::new("git-autosnap-test", "latest")
         .with_wait_for(WaitFor::message_on_stdout("ready"));
     let container = image.start().await?;
@@ -118,9 +118,9 @@ async fn test_gc_without_snapshots() -> Result<()> {
     exec_bash(&container, "mkdir -p /repo && git init /repo").await?;
     exec_in(&container, "/repo", "git autosnap init").await?;
 
-    // Run gc without any snapshots - should not fail
-    let gc_output = exec_in(&container, "/repo", "git autosnap gc").await?;
-    assert!(gc_output.is_empty() || !gc_output.contains("error"));
+    // Run compact without any snapshots - should not fail
+    let compact_output = exec_in(&container, "/repo", "git autosnap compact").await?;
+    assert!(compact_output.is_empty() || !compact_output.contains("error"));
 
     Ok(())
 }
@@ -137,16 +137,41 @@ async fn test_once_without_changes() -> Result<()> {
 
     // Take first snapshot
     exec_in(&container, "/repo", "git autosnap once").await?;
+    let head_after_first = exec_in(
+        &container,
+        "/repo",
+        "git --git-dir=.autosnap rev-parse HEAD",
+    )
+    .await?
+    .trim()
+    .to_string();
 
     // Take second snapshot without changes - should not create duplicate
-    let output1 = exec_in(&container, "/repo", "git autosnap once").await?;
+    exec_in(&container, "/repo", "git autosnap once").await?;
+    let head_after_second = exec_in(
+        &container,
+        "/repo",
+        "git --git-dir=.autosnap rev-parse HEAD",
+    )
+    .await?
+    .trim()
+    .to_string();
 
     // Wait a bit and take third snapshot
     exec_in(&container, "/repo", "sleep 1").await?;
-    let output2 = exec_in(&container, "/repo", "git autosnap once").await?;
+    exec_in(&container, "/repo", "git autosnap once").await?;
+    let head_after_third = exec_in(
+        &container,
+        "/repo",
+        "git --git-dir=.autosnap rev-parse HEAD",
+    )
+    .await?
+    .trim()
+    .to_string();
 
-    // Verify that the same commit hash is returned (no new snapshot created)
-    assert_eq!(output1.trim(), output2.trim());
+    // Verify no new snapshot commits are created when contents are unchanged.
+    assert_eq!(head_after_first, head_after_second);
+    assert_eq!(head_after_second, head_after_third);
 
     // Verify only one snapshot exists
     let log_output = exec_in(&container, "/repo", "git --git-dir=.autosnap log --oneline").await?;
