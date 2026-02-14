@@ -5,8 +5,8 @@ use crate::{
     cli::{Cli, Commands},
 };
 
+pub mod compact;
 pub mod diff;
-pub mod gc;
 pub mod init;
 pub mod logs;
 pub mod once;
@@ -54,11 +54,8 @@ pub fn dispatch(cli: &Cli) -> Result<()> {
         }
         Commands::Stop => stop::StopCommand.run(&ctx),
         Commands::Status => status::StatusCommand.run(&ctx),
-        Commands::Gc { days, prune } => {
-            let cmd = gc::GcCommand {
-                days: *days,
-                prune: *prune,
-            };
+        Commands::Compact { days } => {
+            let cmd = compact::CompactCommand { days: *days };
             cmd.run(&ctx)
         }
         Commands::Uninstall => uninstall::UninstallCommand.run(&ctx),

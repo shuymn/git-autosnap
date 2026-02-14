@@ -47,7 +47,7 @@ async fn snapshot_commit_message_and_contents() -> Result<()> {
 }
 
 #[tokio::test]
-async fn gc_invocation_succeeds() -> Result<()> {
+async fn compact_invocation_succeeds() -> Result<()> {
     let image = GenericImage::new("git-autosnap-test", "latest")
         .with_wait_for(WaitFor::message_on_stdout("ready"));
     let container = image.start().await?;
@@ -57,6 +57,6 @@ async fn gc_invocation_succeeds() -> Result<()> {
     exec_in(&container, "/repo", "sh -c 'echo content > f.txt'").await?;
     exec_in(&container, "/repo", "git autosnap once").await?;
 
-    exec_in(&container, "/repo", "git autosnap gc --prune --days 1").await?;
+    exec_in(&container, "/repo", "git autosnap compact --days 1").await?;
     Ok(())
 }

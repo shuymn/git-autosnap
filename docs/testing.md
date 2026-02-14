@@ -680,7 +680,7 @@ fn test_init_command() -> Result<()> {
 | `stop` | - Running process<br>- No process<br>- Permission denied |
 | `status` | - Running state<br>- Stopped state<br>- PID file corruption |
 | `once` | - Single snapshot<br>- Empty working tree<br>- Large file set |
-| `gc` | - Age-based pruning<br>- Empty history<br>- Custom retention |
+| `compact` | - Age-based compaction<br>- Empty history<br>- Recompact baseline dedup |
 | `uninstall` | - Clean removal<br>- Running process<br>- Missing directory |
 
 ### 4. Process Control
@@ -753,7 +753,7 @@ fn test_config_isolation() {
     
     // For testing global config behavior, use the isolated HOME
     let global_config_path = temp_home.path().join(".gitconfig");
-    std::fs::write(&global_config_path, "[autosnap]\n\tgc.prune-days = 45\n").unwrap();
+    std::fs::write(&global_config_path, "[autosnap]\n\tcompact.days = 45\n").unwrap();
     
     // Test precedence in isolated environment
     // local > global (isolated) > system (avoid modifying)
@@ -791,7 +791,7 @@ fn test_config_integration() {
         .env("HOME", temp_home.path())
         .env("GIT_CONFIG_NOSYSTEM", "1") // Disable system config
         .current_dir(&temp_dir)
-        .args(["config", "--global", "autosnap.gc.prune-days", "30"])
+        .args(["config", "--global", "autosnap.compact.days", "30"])
         .assert()
         .success();
 }

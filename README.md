@@ -43,7 +43,7 @@ Subcommands
   stop                         Stop background watcher
   status                       Exit 0 if running, non‑zero otherwise
   once [MESSAGE]               Take a single snapshot and print its short hash
-  gc [--prune --days N]        Compress objects; optionally prune old snapshots
+  compact [--days N]           Compact old snapshot history and run post-gc
   uninstall                    Stop and remove .autosnap directory
   shell [-i] [COMMIT]          Extract a snapshot and open a subshell to explore
   restore [-i --force --dry-run --full] [COMMIT] [PATH...]
@@ -67,13 +67,14 @@ Use standard Git config scopes (local → global → system):
 # Debounce window in milliseconds (default: 1000)
 git config autosnap.debounce-ms 1000
 
-# GC prune retention in days (default: 60)
-git config autosnap.gc.prune-days 60
+# Compact retention in days (default: 60)
+git config autosnap.compact.days 60
 ```
 
 ## Signals & Process Control
 
 - PID lock file: `.autosnap/autosnap.pid` (single instance)
+- Snapshot/compact operations use `.autosnap/autosnap.ops.lock` to serialize writes
 - Signals handled by the watcher:
   - SIGTERM/SIGINT: take a final snapshot, then exit
   - SIGUSR1: force an immediate snapshot
