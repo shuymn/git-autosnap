@@ -8,15 +8,15 @@ use git2::Repository;
 pub struct AutosnapConfig {
     /// Debounce window in milliseconds for the file watcher.
     pub debounce_ms: u64,
-    /// Prune retention in days for `gc`.
-    pub prune_days: u32,
+    /// Retention in days used by `compact`.
+    pub compact_days: u32,
 }
 
 impl Default for AutosnapConfig {
     fn default() -> Self {
         Self {
             debounce_ms: 1000,
-            prune_days: 60,
+            compact_days: 60,
         }
     }
 }
@@ -46,11 +46,11 @@ impl AutosnapConfig {
         {
             out.debounce_ms = vu;
         }
-        if let Ok(v) = cfg.get_i64("autosnap.gc.prune-days")
+        if let Ok(v) = cfg.get_i64("autosnap.compact.days")
             && v >= 0
             && let Ok(vu) = u32::try_from(v)
         {
-            out.prune_days = vu;
+            out.compact_days = vu;
         }
 
         Ok(out)
