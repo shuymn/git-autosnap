@@ -3,7 +3,7 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 use git2::{Commit, Repository, Signature, Tree};
 
-use super::{index::write_tree_with_retries, repo::autosnap_dir};
+use super::{index::write_tree_with_retries, ops_lock::acquire_ops_lock, repo::autosnap_dir};
 
 /// Take a single snapshot of the working tree and commit it into `.autosnap`.
 /// Returns the short hash of the created commit, or `None` if no changes were made.
@@ -15,6 +15,7 @@ pub fn snapshot_once(repo_root: &Path, message: Option<&str>) -> Result<Option<S
     if !autosnap.exists() {
         bail!(".autosnap is missing; run `git autosnap init` first")
     }
+    let _ops_lock = acquire_ops_lock(repo_root).context("failed to acquire autosnap ops lock")?;
 
     // Open autosnap bare repo and attach the main working directory
     let repo = Repository::open(&autosnap)
