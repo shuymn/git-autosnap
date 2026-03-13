@@ -1089,7 +1089,7 @@ dependencies = [
  "fs2",
  "git2",
  "ignore-files",
- "nix 0.30.1",
+ "nix 0.31.2",
  "predicates",
  "shell-escape",
  "skim",
