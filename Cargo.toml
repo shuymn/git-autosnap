@@ -32,7 +32,7 @@ skim = "0.20.5"
 watchexec-signals = "5.0.0"
 console = "0.16.0"
 watchexec-events = "6.0.0"
-nix = { version = "0.30.1", features = ["signal"] }
+nix = { version = "0.31.0", features = ["signal"] }
 tracing-appender = "0.2.3"
 
 [dev-dependencies]
